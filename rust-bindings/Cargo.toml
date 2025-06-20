@@ -1,0 +1,24 @@
+[workspace]
+members = [
+  "mxl-sys",
+]
+
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+publish = false
+version = "0.1.0"
+license = "Apache-2.0"
+license-file = "../LICENSE.txt"
+
+[workspace.dependencies]
+bindgen = { version = "0.72", features = ["experimental"] }
+dlopen2 = "0.8"
+futures = "0.3"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["registry"] }
+
+[profile.release-with-debug]
+debug = true
+inherits = "release"
