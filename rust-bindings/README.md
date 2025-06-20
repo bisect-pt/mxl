@@ -1,9 +1,16 @@
 # Rust bindings for DMF MXL
 
-## Code guidelines
+## Goals
+
+- Hide all the unsafe stuff inside these bindings.
+- Provide more Rust-native like experience (async API based on `futures::stream` and
+  `futures::sink`?).
+
+## Code Guidelines
 
 - Use `rustfmt` in it's default settings for code formatting.
 - The `cargo clippy` should be always clean.
+- Try to avoid adding more dependencies, unless really necessary.
 
 ## Building
 
