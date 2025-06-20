@@ -1,6 +1,7 @@
 [workspace]
 members = [
-  "mxl-sys",
+    "mxl",
+    "mxl-sys",
 ]
 
 resolver = "2"
@@ -15,9 +16,11 @@ license-file = "../LICENSE.txt"
 [workspace.dependencies]
 bindgen = { version = "0.72", features = ["experimental"] }
 dlopen2 = "0.8"
+# Will be used later, when we get to higher level streams based interfaces.
 futures = "0.3"
+thiserror = "2.0.12"
 tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "0.3", features = ["registry"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "std"] }
 
 [profile.release-with-debug]
 debug = true
