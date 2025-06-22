@@ -26,6 +26,9 @@ pub enum Error {
 
     #[error("dlopen: {0}")]
     DlOpen(#[from] dlopen2::Error),
+
+    #[error("Null string: {0}")]
+    NulString(#[from] std::ffi::NulError),
 }
 
 impl Error {

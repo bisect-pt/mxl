@@ -11,6 +11,7 @@
 - Use `rustfmt` in it's default settings for code formatting.
 - The `cargo clippy` should be always clean.
 - Try to avoid adding more dependencies, unless really necessary.
+- Never use `unwrap`, `expect`, or a similar construct that causes a panic. Always return errors. Tests are an exception.
 
 ## Building
 
