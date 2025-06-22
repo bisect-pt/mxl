@@ -1,49 +1,12 @@
+mod error;
+
+pub use error::{Error, Result};
+
 use std::ffi::CString;
 use std::path::Path;
 use std::time::Duration;
 
 use dlopen2::wrapper::{Container, WrapperApi};
-
-#[derive(Debug, thiserror::Error)]
-pub enum MxlError {
-    #[error("Unknown error")]
-    Unknown,
-    #[error("Flow not found")]
-    FlowNotFound,
-    #[error("Out of range - too late")]
-    OutOfRangeTooLate,
-    #[error("Out of range - too early")]
-    OutOfRangeTooEarly,
-    #[error("Invalid flow reader")]
-    InvalidFlowReader,
-    #[error("Invalid flow writer")]
-    InvalidFlowWriter,
-    #[error("Timeout")]
-    Timeout,
-    #[error("Invalid argument")]
-    InvalidArg,
-    #[error("Conflict")]
-    Conflict,
-    /// The error is not defined in the MXL API, but it is used to wrap other errors.
-    #[error("Other error: {0}")]
-    Other(String),
-}
-
-fn status_to_result(status: mxl_sys::mxlStatus) -> Result<(), MxlError> {
-    match status {
-        mxl_sys::MXL_STATUS_OK => Ok(()),
-        mxl_sys::MXL_ERR_UNKNOWN => Err(MxlError::Unknown),
-        mxl_sys::MXL_ERR_FLOW_NOT_FOUND => Err(MxlError::FlowNotFound),
-        mxl_sys::MXL_ERR_OUT_OF_RANGE_TOO_LATE => Err(MxlError::OutOfRangeTooLate),
-        mxl_sys::MXL_ERR_OUT_OF_RANGE_TOO_EARLY => Err(MxlError::OutOfRangeTooEarly),
-        mxl_sys::MXL_ERR_INVALID_FLOW_READER => Err(MxlError::InvalidFlowReader),
-        mxl_sys::MXL_ERR_INVALID_FLOW_WRITER => Err(MxlError::InvalidFlowWriter),
-        mxl_sys::MXL_ERR_TIMEOUT => Err(MxlError::Timeout),
-        mxl_sys::MXL_ERR_INVALID_ARG => Err(MxlError::InvalidArg),
-        mxl_sys::MXL_ERR_CONFLICT => Err(MxlError::Conflict),
-        _ => Err(MxlError::Unknown),
-    }
-}
 
 #[derive(WrapperApi)]
 pub struct MxlApi {
@@ -182,8 +145,8 @@ pub struct MxlApi {
     mxl_get_time: unsafe extern "C" fn() -> u64,
 }
 
-pub fn load_api(path_to_so_file: impl AsRef<Path>) -> Result<Container<MxlApi>, dlopen2::Error> {
-    unsafe { Container::load(path_to_so_file.as_ref().as_os_str()) }
+pub fn load_api(path_to_so_file: impl AsRef<Path>) -> Result<Container<MxlApi>> {
+    Ok(unsafe { Container::load(path_to_so_file.as_ref().as_os_str()) }?)
 }
 
 pub struct MxlInstance {
@@ -192,7 +155,7 @@ pub struct MxlInstance {
 }
 
 impl MxlInstance {
-    pub fn new(api: Container<MxlApi>, domain: &str, options: &str) -> Result<Self, MxlError> {
+    pub fn new(api: Container<MxlApi>, domain: &str, options: &str) -> Result<Self> {
         let instance = unsafe {
             api.mxl_create_instance(
                 CString::new(domain).unwrap().as_ptr(),
@@ -200,34 +163,32 @@ impl MxlInstance {
             )
         };
         if instance.is_null() {
-            Err(MxlError::Other(
-                "Failed to create MXL instance.".to_string(),
-            ))
+            Err(Error::Other("Failed to create MXL instance.".to_string()))
         } else {
             Ok(Self { api, instance })
         }
     }
 
-    pub fn destroy(&mut self) -> Result<(), MxlError> {
+    pub fn destroy(&mut self) -> Result<()> {
         let result;
         if self.instance.is_null() {
-            return Err(MxlError::Other(
+            return Err(Error::Other(
                 "Internal instance not initialized.".to_string(),
             ));
         }
         unsafe {
-            result = status_to_result(self.api.mxl_destroy_instance(self.instance));
+            result = Error::from_status(self.api.mxl_destroy_instance(self.instance));
         }
         self.instance = std::ptr::null_mut();
         result
     }
 
-    pub fn create_flow_reader(&self, flow_id: &str) -> Result<MxlFlowReader, MxlError> {
-        let flow_id = CString::new(flow_id).map_err(|_| MxlError::InvalidArg)?;
-        let options = CString::new("").map_err(|_| MxlError::InvalidArg)?;
+    pub fn create_flow_reader(&self, flow_id: &str) -> Result<MxlFlowReader> {
+        let flow_id = CString::new(flow_id).map_err(|_| Error::InvalidArg)?;
+        let options = CString::new("").map_err(|_| Error::InvalidArg)?;
         let mut reader: mxl_sys::mxlFlowReader = std::ptr::null_mut();
         unsafe {
-            status_to_result(self.api.mxl_create_flow_reader(
+            Error::from_status(self.api.mxl_create_flow_reader(
                 self.instance,
                 flow_id.as_ptr(),
                 options.as_ptr(),
@@ -235,7 +196,7 @@ impl MxlInstance {
             ))?;
         }
         if reader.is_null() {
-            return Err(MxlError::Other("Failed to create flow reader.".to_string()));
+            return Err(Error::Other("Failed to create flow reader.".to_string()));
         }
         Ok(MxlFlowReader {
             instance: self,
@@ -285,13 +246,13 @@ pub struct FlowInfo {
 }
 
 impl FlowInfo {
-    pub fn discrete_flow_info(&self) -> Result<&mxl_sys::DiscreteFlowInfo, MxlError> {
+    pub fn discrete_flow_info(&self) -> Result<&mxl_sys::DiscreteFlowInfo> {
         // Check is based on mxlIsDiscreteDataFormat, which is inline, thus not accessible in
         // mxl_sys.
         if self.value.common.format != mxl_sys::MXL_DATA_FORMAT_VIDEO
             && self.value.common.format != mxl_sys::MXL_DATA_FORMAT_DATA
         {
-            return Err(MxlError::Other(format!(
+            return Err(Error::Other(format!(
                 "Flow format is {}, video or data require.",
                 self.value.common.format
             )));
@@ -311,13 +272,13 @@ pub struct MxlFlowReader<'a> {
 }
 
 impl<'a> MxlFlowReader<'a> {
-    pub fn destroy(&mut self) -> Result<(), MxlError> {
+    pub fn destroy(&mut self) -> Result<()> {
         let result;
         if self.reader.is_null() {
-            return Err(MxlError::InvalidArg);
+            return Err(Error::InvalidArg);
         }
         unsafe {
-            result = status_to_result(
+            result = Error::from_status(
                 self.instance
                     .api
                     .mxl_release_flow_reader(self.instance.instance, self.reader),
@@ -327,10 +288,10 @@ impl<'a> MxlFlowReader<'a> {
         result
     }
 
-    pub fn get_info(&self) -> Result<FlowInfo, MxlError> {
+    pub fn get_info(&self) -> Result<FlowInfo> {
         let mut flow_info: mxl_sys::FlowInfo = unsafe { std::mem::zeroed() };
         unsafe {
-            status_to_result(
+            Error::from_status(
                 self.instance
                     .api
                     .mxl_flow_reader_get_info(self.reader, &mut flow_info),
@@ -339,13 +300,13 @@ impl<'a> MxlFlowReader<'a> {
         Ok(FlowInfo { value: flow_info })
     }
 
-    pub fn get_complete_grain(&self, index: u64, timeout: Duration) -> Result<GrainData, MxlError> {
+    pub fn get_complete_grain(&self, index: u64, timeout: Duration) -> Result<GrainData> {
         let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         let timeout_ns = timeout.as_nanos() as u64;
         loop {
             unsafe {
-                status_to_result(self.instance.api.mxl_flow_reader_get_grain(
+                Error::from_status(self.instance.api.mxl_flow_reader_get_grain(
                     self.reader,
                     index,
                     timeout_ns,
@@ -358,7 +319,7 @@ impl<'a> MxlFlowReader<'a> {
                 continue;
             }
             if payload_ptr.is_null() {
-                return Err(MxlError::Other(format!(
+                return Err(Error::Other(format!(
                     "Failed to get grain payload for index {}.",
                     index
                 )));
