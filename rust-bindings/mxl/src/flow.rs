@@ -41,8 +41,3 @@ impl FlowInfo {
         Ok(unsafe { &self.value.__bindgen_anon_1.discrete })
     }
 }
-
-pub struct GrainData {
-    pub user_data: Vec<u8>,
-    pub payload: Vec<u8>,
-}
