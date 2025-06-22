@@ -1,31 +1,29 @@
 use std::env;
 use std::path::PathBuf;
 
-fn main() {
-    let headers_dir = "mxl-headers-2025-06-17";
-    let headers = [
-        "mxl/dataformat.h",
-        "mxl/flow.h",
-        "mxl/flowinfo.h",
-        "mxl/mxl.h",
-        "mxl/platform.h",
-        "mxl/rational.h",
-        "mxl/time.h",
-        "mxl/version.h",
-    ];
+#[cfg(debug_assertions)]
+const BUILD_VARIANT: &str = "Linux-Clang-Debug";
+#[cfg(not(debug_assertions))]
+const BUILD_VARIANT: &str = "Linux-Clang-Release";
 
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("failed to get current directory");
-    let includes_dir = format!("{manifest_dir}/{headers_dir}");
+fn main() {
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("failed to get current directory"));
+    let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let build_dir = repo_root.join("build").join(BUILD_VARIANT);
+    let includes_dir = repo_root.join("lib").join("include");
+
+    let build_version_dir = build_dir.join("lib").join("include");
+    let build_version_dir = build_version_dir.to_string_lossy();
+    println!("cargo:include={build_version_dir}");
+
+    let includes_dir = includes_dir.to_string_lossy();
     println!("cargo:include={includes_dir}");
 
     let bindings = bindgen::builder()
         .clang_arg(format!("-I{includes_dir}"))
-        .headers(
-            headers
-                .iter()
-                .map(|val| format!("{includes_dir}/{val}"))
-                .collect::<Vec<_>>(),
-        )
+        .clang_arg(format!("-I{build_version_dir}"))
+        .header("wrapper.h")
         .derive_default(true)
         .derive_debug(true)
         .prepend_enum_name(false)
