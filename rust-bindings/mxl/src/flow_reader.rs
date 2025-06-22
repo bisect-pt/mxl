@@ -1,10 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{
-    Error, Result,
-    flow::{FlowInfo, GrainData},
-    instance::InstanceContext,
-};
+use crate::{Error, Result, flow::FlowInfo, instance::InstanceContext};
+
+pub struct GrainData<'a> {
+    pub user_data: &'a [u8],
+    pub payload: &'a [u8],
+}
 
 pub struct MxlFlowReader {
     context: Arc<InstanceContext>,
@@ -32,7 +33,11 @@ impl MxlFlowReader {
         Ok(FlowInfo { value: flow_info })
     }
 
-    pub fn get_complete_grain(&self, index: u64, timeout: Duration) -> Result<GrainData> {
+    pub fn get_complete_grain<'a>(
+        &'a self,
+        index: u64,
+        timeout: Duration,
+    ) -> Result<GrainData<'a>> {
         let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         let timeout_ns = timeout.as_nanos() as u64;
@@ -58,11 +63,16 @@ impl MxlFlowReader {
             }
             break;
         }
-        let payload = unsafe {
-            let slice = std::slice::from_raw_parts(payload_ptr, grain_info.grainSize as usize);
-            slice.to_vec()
-        };
-        let user_data = grain_info.userData.to_vec();
+
+        // SAFETY
+        // We know that the lifetime is as long as the flow, so it is at least self's lifetime.
+        // It may happen that the buffer is overwritten by a subsequent write, but it is safe.
+        let user_data: &'a [u8] =
+            unsafe { std::mem::transmute::<&[u8], &'a [u8]>(&grain_info.userData) };
+
+        let payload =
+            unsafe { std::slice::from_raw_parts(payload_ptr, grain_info.grainSize as usize) };
+
         Ok(GrainData { user_data, payload })
     }
 
