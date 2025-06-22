@@ -50,5 +50,4 @@ fn basic_mxl_writing_reading() {
     info!("Grain data len: {:?}", grain_data.payload.len());
     flow_reader.destroy().unwrap();
     drop(flow_reader);
-    mxl_instance.destroy().unwrap();
 }

@@ -24,20 +24,6 @@ impl MxlInstance {
         }
     }
 
-    pub fn destroy(&mut self) -> Result<()> {
-        let result;
-        if self.instance.is_null() {
-            return Err(Error::Other(
-                "Internal instance not initialized.".to_string(),
-            ));
-        }
-        unsafe {
-            result = Error::from_status(self.api.mxl_destroy_instance(self.instance));
-        }
-        self.instance = std::ptr::null_mut();
-        result
-    }
-
     pub fn create_flow_reader(&self, flow_id: &str) -> Result<MxlFlowReader> {
         let flow_id = CString::new(flow_id).map_err(|_| Error::InvalidArg)?;
         let options = CString::new("").map_err(|_| Error::InvalidArg)?;
@@ -67,9 +53,7 @@ impl MxlInstance {
 impl Drop for MxlInstance {
     fn drop(&mut self) {
         if !self.instance.is_null() {
-            if let Err(error) = self.destroy() {
-                tracing::error!("Failed to destroy MXL instance: {:?}", error);
-            }
+            unsafe { self.api.mxl_destroy_instance(self.instance) };
         }
     }
 }
