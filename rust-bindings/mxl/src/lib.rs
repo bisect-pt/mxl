@@ -1,83 +1,12 @@
 mod api;
 mod error;
+mod instance;
 
 pub use api::{MxlApi, load_api};
 pub use error::{Error, Result};
+pub use instance::MxlInstance;
 
-use std::ffi::CString;
 use std::time::Duration;
-
-use dlopen2::wrapper::Container;
-
-pub struct MxlInstance {
-    api: Container<MxlApi>,
-    instance: mxl_sys::mxlInstance,
-}
-
-impl MxlInstance {
-    pub fn new(api: Container<MxlApi>, domain: &str, options: &str) -> Result<Self> {
-        let instance = unsafe {
-            api.mxl_create_instance(
-                CString::new(domain).unwrap().as_ptr(),
-                CString::new(options).unwrap().as_ptr(),
-            )
-        };
-        if instance.is_null() {
-            Err(Error::Other("Failed to create MXL instance.".to_string()))
-        } else {
-            Ok(Self { api, instance })
-        }
-    }
-
-    pub fn destroy(&mut self) -> Result<()> {
-        let result;
-        if self.instance.is_null() {
-            return Err(Error::Other(
-                "Internal instance not initialized.".to_string(),
-            ));
-        }
-        unsafe {
-            result = Error::from_status(self.api.mxl_destroy_instance(self.instance));
-        }
-        self.instance = std::ptr::null_mut();
-        result
-    }
-
-    pub fn create_flow_reader(&self, flow_id: &str) -> Result<MxlFlowReader> {
-        let flow_id = CString::new(flow_id).map_err(|_| Error::InvalidArg)?;
-        let options = CString::new("").map_err(|_| Error::InvalidArg)?;
-        let mut reader: mxl_sys::mxlFlowReader = std::ptr::null_mut();
-        unsafe {
-            Error::from_status(self.api.mxl_create_flow_reader(
-                self.instance,
-                flow_id.as_ptr(),
-                options.as_ptr(),
-                &mut reader,
-            ))?;
-        }
-        if reader.is_null() {
-            return Err(Error::Other("Failed to create flow reader.".to_string()));
-        }
-        Ok(MxlFlowReader {
-            instance: self,
-            reader,
-        })
-    }
-
-    pub fn get_current_head_index(&self, rational: &mxl_sys::Rational) -> u64 {
-        unsafe { self.api.mxl_get_current_head_index(rational) }
-    }
-}
-
-impl Drop for MxlInstance {
-    fn drop(&mut self) {
-        if !self.instance.is_null() {
-            if let Err(error) = self.destroy() {
-                tracing::error!("Failed to destroy MXL instance: {:?}", error);
-            }
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataFormat {
