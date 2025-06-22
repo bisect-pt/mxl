@@ -13,8 +13,8 @@ impl MxlInstance {
     pub fn new(api: Container<MxlApi>, domain: &str, options: &str) -> Result<Self> {
         let instance = unsafe {
             api.mxl_create_instance(
-                CString::new(domain).unwrap().as_ptr(),
-                CString::new(options).unwrap().as_ptr(),
+                CString::new(domain)?.as_ptr(),
+                CString::new(options)?.as_ptr(),
             )
         };
         if instance.is_null() {
