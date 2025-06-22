@@ -2,9 +2,9 @@
 ///
 /// The tests now require an MXL library of a specific name to be present in the system. This should
 /// change in the future. For now, feel free to just edit the path to your library.
-use std::path::PathBuf;
 use std::time::Duration;
 
+use mxl::config::get_mxf_so_path;
 use tracing::info;
 
 static LOG_ONCE: std::sync::Once = std::sync::Once::new();
@@ -22,12 +22,7 @@ fn setup_test() -> mxl::MxlInstance {
             .init();
     });
 
-    // To run the test, you need to alter the path below to point to a valid file with MXL
-    // implementation. It is possible to use just the file name, as long as the file is in the
-    // library search path.
-    let libpath =
-        PathBuf::from("/home/pac/Sources/MXL/mxl/install/Linux-Clang-Debug/lib/libmxl.so");
-    let mxl_api = mxl::load_api(libpath).unwrap();
+    let mxl_api = mxl::load_api(get_mxf_so_path()).unwrap();
     // TODO: Randomize the domain name to allow parallel tests run.
     mxl::MxlInstance::new(mxl_api, "/dev/shm/mxl_domain", "").unwrap()
 }
@@ -37,7 +32,7 @@ fn basic_mxl_writing_reading() {
     // TODO: Add the writing part of the test. Now the test requires the external MXL tool to write
     //       data: `tools/mxl-gst/mxl-gst-videotestsrc -d /dev/shm/mxl_domain -f
     //       ../../lib/tests/data/v210_flow.json`
-    let mut mxl_instance = setup_test();
+    let mxl_instance = setup_test();
     let mut flow_reader = mxl_instance
         .create_flow_reader("5fbec3b1-1b0f-417d-9059-8b94a47197ed")
         .unwrap();

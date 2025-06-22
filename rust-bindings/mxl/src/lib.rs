@@ -4,6 +4,8 @@ mod flow;
 mod flow_reader;
 mod instance;
 
+pub mod config;
+
 pub use api::{MxlApi, load_api};
 pub use error::{Error, Result};
 pub use flow::*;
