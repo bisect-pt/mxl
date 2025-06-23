@@ -2,8 +2,8 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Unknown error")]
-    Unknown,
+    #[error("Unknown error: {0}")]
+    Unknown(mxl_sys::mxlStatus),
     #[error("Flow not found")]
     FlowNotFound,
     #[error("Out of range - too late")]
@@ -35,7 +35,7 @@ impl Error {
     pub fn from_status(status: mxl_sys::mxlStatus) -> Result<()> {
         match status {
             mxl_sys::MXL_STATUS_OK => Ok(()),
-            mxl_sys::MXL_ERR_UNKNOWN => Err(Error::Unknown),
+            mxl_sys::MXL_ERR_UNKNOWN => Err(Error::Unknown(mxl_sys::MXL_ERR_UNKNOWN)),
             mxl_sys::MXL_ERR_FLOW_NOT_FOUND => Err(Error::FlowNotFound),
             mxl_sys::MXL_ERR_OUT_OF_RANGE_TOO_LATE => Err(Error::OutOfRangeTooLate),
             mxl_sys::MXL_ERR_OUT_OF_RANGE_TOO_EARLY => Err(Error::OutOfRangeTooEarly),
@@ -44,7 +44,7 @@ impl Error {
             mxl_sys::MXL_ERR_TIMEOUT => Err(Error::Timeout),
             mxl_sys::MXL_ERR_INVALID_ARG => Err(Error::InvalidArg),
             mxl_sys::MXL_ERR_CONFLICT => Err(Error::Conflict),
-            _ => Err(Error::Unknown),
+            other => Err(Error::Unknown(other)),
         }
     }
 }
