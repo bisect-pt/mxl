@@ -5,7 +5,7 @@
         "context": "../",
         "args": {
             "BASE_IMAGE_VERSION": "25.10"
-        }        
+        }
     },
     "runArgs": [
         "--security-opt",
@@ -48,5 +48,10 @@
         "CCACHE_DIR": "${containerWorkspaceFolder}/.cache/ccache",
         "DISPLAY": "${localEnv:DISPLAY}"
     },
-    "remoteUser": "devcontainer"
+    "remoteUser": "devcontainer",
+    "features": {
+        "ghcr.io/devcontainers/features/rust:1": {
+            "version": "1.87.0"
+        }
+    }
 }
