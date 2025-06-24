@@ -16,20 +16,8 @@ impl MxlFlowReader {
         Self { context, reader }
     }
 
-    pub fn destroy(&mut self) -> Result<()> {
-        let result;
-        if self.reader.is_null() {
-            return Err(Error::InvalidArg);
-        }
-        unsafe {
-            result = Error::from_status(
-                self.context
-                    .api
-                    .mxl_release_flow_reader(self.context.instance, self.reader),
-            );
-        }
-        self.reader = std::ptr::null_mut();
-        result
+    pub fn destroy(mut self) -> Result<()> {
+        self.destroy_inner()
     }
 
     pub fn get_info(&self) -> Result<FlowInfo> {
@@ -77,14 +65,33 @@ impl MxlFlowReader {
         let user_data = grain_info.userData.to_vec();
         Ok(GrainData { user_data, payload })
     }
+
+    fn destroy_inner(&mut self) -> Result<()> {
+        if self.reader.is_null() {
+            return Err(Error::InvalidArg);
+        }
+
+        let mut reader = std::ptr::null_mut();
+        std::mem::swap(&mut self.reader, &mut reader);
+
+        let result = Error::from_status(unsafe {
+            self.context
+                .api
+                .mxl_release_flow_reader(self.context.instance, reader)
+        });
+
+        if let Err(err) = &result {
+            tracing::error!("Failed to release MXL flow reader: {:?}", err);
+        }
+
+        result
+    }
 }
 
 impl Drop for MxlFlowReader {
     fn drop(&mut self) {
         if !self.reader.is_null() {
-            if let Err(error) = self.destroy() {
-                tracing::error!("Failed to release MXL flow reader: {:?}", error);
-            }
+            let _ = self.destroy_inner();
         }
     }
 }
