@@ -17,6 +17,21 @@ pub(crate) struct InstanceContext {
 unsafe impl Send for InstanceContext {}
 unsafe impl Sync for InstanceContext {}
 
+impl InstanceContext {
+    /// This function forces the destruction of the MXL instance.
+    /// It is not safe as other objects may still be using it.
+    /// It is meant for testing purposes only.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that no other objects are using the MXL instance when this function is called.
+    /// Calling this function while other references exist may lead to undefined behavior.
+    pub unsafe fn destroy(&self) -> Result<()> {
+        unsafe { self.api.mxl_destroy_instance(self.instance) };
+        Ok(())
+    }
+}
+
 impl Drop for InstanceContext {
     fn drop(&mut self) {
         if !self.instance.is_null() {
@@ -65,5 +80,17 @@ impl MxlInstance {
 
     pub fn get_current_head_index(&self, rational: &mxl_sys::Rational) -> u64 {
         unsafe { self.context.api.mxl_get_current_head_index(rational) }
+    }
+
+    /// This function forces the destruction of the MXL instance.
+    /// It is not safe as other objects may still be using it.
+    /// It is meant for testing purposes only.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that no other objects are using the MXL instance when this function is called.
+    /// Calling this function while other references exist may lead to undefined behavior.
+    pub unsafe fn destroy(self) -> Result<()> {
+        unsafe { self.context.destroy() }
     }
 }
