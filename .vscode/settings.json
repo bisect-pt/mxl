@@ -1,6 +1,6 @@
 {
     "rust-analyzer.linkedProjects": [
-        "rust-bindings/Cargo.toml"
+        "rust/Cargo.toml"
     ],
     "files.associations": {
         "array": "cpp",
