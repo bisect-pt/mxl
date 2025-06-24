@@ -44,4 +44,5 @@ fn basic_mxl_writing_reading() {
         .unwrap();
     info!("Grain data len: {:?}", grain_data.payload.len());
     flow_reader.destroy().unwrap();
+    unsafe { mxl_instance.destroy() }.unwrap();
 }
