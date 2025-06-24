@@ -7,7 +7,7 @@ RUN echo 'vm.swappiness=0'          >> /etc/sysctl.conf
 
 # Install basic and runtime dependencies
 RUN apt clean all && apt-get update \
- && apt-get install -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     wget \
     curl \
     zip \
@@ -47,7 +47,7 @@ RUN apt-get install -y --no-install-recommends \
 # Make the selected clang version the default alternative
 COPY register-clang-version.sh ./register-clang-version.sh 
 RUN ./register-clang-version.sh "${CLANG_VERSION}" 100 \
- && rm ./register-clang-version.sh
+    && rm ./register-clang-version.sh
 
 
 RUN apt-get install -y --no-install-recommends \
@@ -70,16 +70,18 @@ ARG USER_GID=${USER_UID}
 
 # Create the user
 RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
- && useradd --uid "${USER_UID}" --gid "${USER_GID}" -m -s /bin/bash "${USERNAME}" \
- && apt-get install -y sudo \
- && printf '%s ALL=(root) NOPASSWD:ALL\n' "${USERNAME}" > "/etc/sudoers.d/${USERNAME}" \
- && chmod 0440 "/etc/sudoers.d/${USERNAME}"
+    && useradd --uid "${USER_UID}" --gid "${USER_GID}" -m -s /bin/bash "${USERNAME}" \
+    && apt-get install -y sudo \
+    && printf '%s ALL=(root) NOPASSWD:ALL\n' "${USERNAME}" > "/etc/sudoers.d/${USERNAME}" \
+    && chmod 0440 "/etc/sudoers.d/${USERNAME}"
 
 USER "${USERNAME}"
 WORKDIR "/home/${USERNAME}"
 
 # Install vcpkg
 RUN git clone https://github.com/microsoft/vcpkg \
- && ./vcpkg/bootstrap-vcpkg.sh --disableMetrics
+    && ./vcpkg/bootstrap-vcpkg.sh --disableMetrics
 
 ENV VCPKG_ROOT="/home/${USERNAME}/vcpkg"
+
+USER root

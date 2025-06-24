@@ -28,7 +28,8 @@
                 "matepek.vscode-catch2-test-adapter",
                 "llvm-vs-code-extensions.vscode-clangd",
                 "xaver.clang-format",
-                "bierner.markdown-mermaid"
+                "bierner.markdown-mermaid",
+                "rust-lang.rust-analyzer"
             ],
             "settings": {
                 "C_Cpp.intelliSenseEngine": "disabled",
@@ -37,6 +38,10 @@
                 "editor.formatOnSave": true,
                 "[cpp]": {
                     "editor.defaultFormatter": "xaver.clang-format"
+                },
+                "rust-analyzer.check.command": "clippy",
+                "[rust]": {
+                    "editor.defaultFormatter": "rust-lang.rust-analyzer"
                 }
             }
         }
