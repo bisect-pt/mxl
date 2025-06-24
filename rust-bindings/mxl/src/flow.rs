@@ -34,7 +34,7 @@ impl FlowInfo {
             && self.value.common.format != mxl_sys::MXL_DATA_FORMAT_DATA
         {
             return Err(Error::Other(format!(
-                "Flow format is {}, video or data require.",
+                "Flow format is {}, video or data required.",
                 self.value.common.format
             )));
         }
