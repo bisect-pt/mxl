@@ -1,16 +1,21 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use crate::{
-    Error, MxlInstance, Result,
+    Error, Result,
     flow::{FlowInfo, GrainData},
+    instance::InstanceContext,
 };
 
-pub struct MxlFlowReader<'a> {
-    pub(crate) instance: &'a MxlInstance,
-    pub(crate) reader: mxl_sys::mxlFlowReader,
+pub struct MxlFlowReader {
+    context: Arc<InstanceContext>,
+    reader: mxl_sys::mxlFlowReader,
 }
 
-impl<'a> MxlFlowReader<'a> {
+impl MxlFlowReader {
+    pub(crate) fn new(context: Arc<InstanceContext>, reader: mxl_sys::mxlFlowReader) -> Self {
+        Self { context, reader }
+    }
+
     pub fn destroy(&mut self) -> Result<()> {
         let result;
         if self.reader.is_null() {
@@ -18,9 +23,9 @@ impl<'a> MxlFlowReader<'a> {
         }
         unsafe {
             result = Error::from_status(
-                self.instance
+                self.context
                     .api
-                    .mxl_release_flow_reader(self.instance.instance, self.reader),
+                    .mxl_release_flow_reader(self.context.instance, self.reader),
             );
         }
         self.reader = std::ptr::null_mut();
@@ -31,7 +36,7 @@ impl<'a> MxlFlowReader<'a> {
         let mut flow_info: mxl_sys::FlowInfo = unsafe { std::mem::zeroed() };
         unsafe {
             Error::from_status(
-                self.instance
+                self.context
                     .api
                     .mxl_flow_reader_get_info(self.reader, &mut flow_info),
             )?;
@@ -45,7 +50,7 @@ impl<'a> MxlFlowReader<'a> {
         let timeout_ns = timeout.as_nanos() as u64;
         loop {
             unsafe {
-                Error::from_status(self.instance.api.mxl_flow_reader_get_grain(
+                Error::from_status(self.context.api.mxl_flow_reader_get_grain(
                     self.reader,
                     index,
                     timeout_ns,
@@ -74,7 +79,7 @@ impl<'a> MxlFlowReader<'a> {
     }
 }
 
-impl Drop for MxlFlowReader<'_> {
+impl Drop for MxlFlowReader {
     fn drop(&mut self) {
         if !self.reader.is_null() {
             if let Err(error) = self.destroy() {
