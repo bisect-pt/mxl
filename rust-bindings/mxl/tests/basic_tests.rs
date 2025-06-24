@@ -33,7 +33,7 @@ fn basic_mxl_writing_reading() {
     //       data: `tools/mxl-gst/mxl-gst-videotestsrc -d /dev/shm/mxl_domain -f
     //       ../../lib/tests/data/v210_flow.json`
     let mxl_instance = setup_test();
-    let mut flow_reader = mxl_instance
+    let flow_reader = mxl_instance
         .create_flow_reader("5fbec3b1-1b0f-417d-9059-8b94a47197ed")
         .unwrap();
     let flow_info = flow_reader.get_info().unwrap();
