@@ -1,11 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{Error, Result, flow::FlowInfo, instance::InstanceContext};
-
-pub struct GrainData<'a> {
-    pub user_data: &'a [u8],
-    pub payload: &'a [u8],
-}
+use crate::{Error, GrainData, Result, flow::FlowInfo, instance::InstanceContext};
 
 pub struct MxlFlowReader {
     context: Arc<InstanceContext>,

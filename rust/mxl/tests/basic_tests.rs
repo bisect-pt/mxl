@@ -4,7 +4,7 @@
 /// change in the future. For now, feel free to just edit the path to your library.
 use std::time::Duration;
 
-use mxl::config::get_mxf_so_path;
+use mxl::{OwnedGrainData, config::get_mxf_so_path};
 use tracing::info;
 
 static LOG_ONCE: std::sync::Once = std::sync::Once::new();
@@ -42,6 +42,7 @@ fn basic_mxl_writing_reading() {
     let grain_data = flow_reader
         .get_complete_grain(current_head_index, Duration::from_secs(5))
         .unwrap();
+    let grain_data: OwnedGrainData = grain_data.into();
     info!("Grain data len: {:?}", grain_data.payload.len());
     flow_reader.destroy().unwrap();
     unsafe { mxl_instance.destroy() }.unwrap();
