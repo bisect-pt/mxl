@@ -16,7 +16,9 @@ fn main() {
         .join("constants.rs");
 
     let data = format!(
-        "pub const MXL_BUILD_DIR: &str = \"{}\";\n",
+        "pub const MXL_REPO_ROOT: &str = \"{}\";\n\
+        pub const MXL_BUILD_DIR: &str = \"{}\";\n",
+        repo_root.to_string_lossy(),
         build_dir.to_string_lossy()
     );
     std::fs::write(out_path, data).expect("Unable to write file");

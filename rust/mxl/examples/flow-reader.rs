@@ -1,3 +1,5 @@
+mod common;
+
 use std::time::Duration;
 
 use clap::Parser;
@@ -13,13 +15,13 @@ pub struct Opts {
     #[arg(long)]
     pub mxl_domain: String,
 
-    /// The id of the flow.
+    /// The id of the flow to read.
     #[arg(long)]
     pub flow_id: String,
 }
 
 fn main() -> Result<(), mxl::Error> {
-    setup_logging();
+    common::setup_logging();
     let opts: Opts = Opts::parse();
 
     let mxl_api = mxl::load_api(get_mxf_so_path())?;
@@ -40,14 +42,4 @@ fn main() -> Result<(), mxl::Error> {
     }
 
     Ok(())
-}
-
-fn setup_logging() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
 }

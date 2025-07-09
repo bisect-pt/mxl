@@ -79,24 +79,20 @@ impl MxlFlowReader {
         let mut reader = std::ptr::null_mut();
         std::mem::swap(&mut self.reader, &mut reader);
 
-        let result = Error::from_status(unsafe {
+        Error::from_status(unsafe {
             self.context
                 .api
                 .mxl_release_flow_reader(self.context.instance, reader)
-        });
-
-        if let Err(err) = &result {
-            tracing::error!("Failed to release MXL flow reader: {:?}", err);
-        }
-
-        result
+        })
     }
 }
 
 impl Drop for MxlFlowReader {
     fn drop(&mut self) {
         if !self.reader.is_null() {
-            let _ = self.destroy_inner();
+            if let Err(err) = self.destroy_inner() {
+                tracing::error!("Failed to release MXL flow reader: {:?}", err);
+            }
         }
     }
 }

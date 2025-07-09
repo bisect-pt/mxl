@@ -1,3 +1,5 @@
+use uuid::Uuid;
+
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,5 +41,17 @@ impl FlowInfo {
             )));
         }
         Ok(unsafe { &self.value.__bindgen_anon_1.discrete })
+    }
+
+    pub fn common_flow_info(&self) -> CommonFlowInfo {
+        CommonFlowInfo(&self.value.common)
+    }
+}
+
+pub struct CommonFlowInfo<'a>(&'a mxl_sys::CommonFlowInfo);
+
+impl CommonFlowInfo<'_> {
+    pub fn id(&self) -> Uuid {
+        Uuid::from_bytes(self.0.id)
     }
 }
