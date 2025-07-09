@@ -26,8 +26,12 @@ impl InstanceContext {
     ///
     /// The caller must ensure that no other objects are using the MXL instance when this function is called.
     /// Calling this function while other references exist may lead to undefined behavior.
-    pub unsafe fn destroy(&self) -> Result<()> {
-        unsafe { self.api.mxl_destroy_instance(self.instance) };
+    pub unsafe fn destroy(&mut self) -> Result<()> {
+        unsafe {
+            let mut instance = std::ptr::null_mut();
+            std::mem::swap(&mut self.instance, &mut instance);
+            self.api.mxl_destroy_instance(self.instance)
+        };
         Ok(())
     }
 }
@@ -194,8 +198,11 @@ impl MxlInstance {
     /// # Safety
     ///
     /// The caller must ensure that no other objects are using the MXL instance when this function is called.
-    /// Calling this function while other references exist may lead to undefined behavior.
+    /// Calling this function while other references exist will lead to panic.
     pub unsafe fn destroy(self) -> Result<()> {
-        unsafe { self.context.destroy() }
+        unsafe {
+            let mut context = Arc::into_inner(self.context).unwrap();
+            context.destroy()
+        }
     }
 }
