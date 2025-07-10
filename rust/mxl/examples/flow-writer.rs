@@ -40,7 +40,9 @@ fn main() -> Result<(), mxl::Error> {
         "Will write to flow \"{flow_id}\" with grain rate {}/{} starting from index {grain_index}.",
         grain_rate.numerator, grain_rate.denominator
     );
-    let writer = mxl_instance.create_flow_writer(flow_id.as_str())?;
+    let writer = mxl_instance
+        .create_flow_writer(flow_id.as_str())?
+        .to_grain_writer()?;
 
     let mut remaining_grains = opts.grain_count;
     loop {

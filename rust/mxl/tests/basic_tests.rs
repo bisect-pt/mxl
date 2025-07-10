@@ -55,10 +55,11 @@ fn basic_mxl_writing_reading() {
     let flow_info = mxl_instance.create_flow(flow_def.as_str(), None).unwrap();
     let flow_id = flow_info.common_flow_info().id().to_string();
     let flow_writer = mxl_instance.create_flow_writer(flow_id.as_str()).unwrap();
+    let grain_writer = flow_writer.to_grain_writer().unwrap();
     let flow_reader = mxl_instance.create_flow_reader(flow_id.as_str()).unwrap();
     let rate = flow_info.discrete_flow_info().unwrap().grainRate;
     let current_index = mxl_instance.get_current_index(&rate);
-    let grain_write_access = flow_writer.open_grain(current_index).unwrap();
+    let grain_write_access = grain_writer.open_grain(current_index).unwrap();
     let grain_size = grain_write_access.max_size();
     grain_write_access.commit(grain_size).unwrap();
     let grain_data = flow_reader
@@ -67,7 +68,7 @@ fn basic_mxl_writing_reading() {
     let grain_data: OwnedGrainData = grain_data.into();
     info!("Grain data len: {:?}", grain_data.payload.len());
     flow_reader.destroy().unwrap();
-    flow_writer.destroy().unwrap();
+    grain_writer.destroy().unwrap();
     mxl_instance.destroy_flow(flow_id.as_str()).unwrap();
     unsafe { mxl_instance.destroy() }.unwrap();
 }

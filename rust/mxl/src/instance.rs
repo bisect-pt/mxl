@@ -44,6 +44,27 @@ impl Drop for InstanceContext {
     }
 }
 
+pub(crate) fn create_flow_reader(
+    context: &Arc<InstanceContext>,
+    flow_id: &str,
+) -> Result<MxlFlowReader> {
+    let flow_id = CString::new(flow_id)?;
+    let options = CString::new("")?;
+    let mut reader: mxl_sys::mxlFlowReader = std::ptr::null_mut();
+    unsafe {
+        Error::from_status(context.api.mxl_create_flow_reader(
+            context.instance,
+            flow_id.as_ptr(),
+            options.as_ptr(),
+            &mut reader,
+        ))?;
+    }
+    if reader.is_null() {
+        return Err(Error::Other("Failed to create flow reader.".to_string()));
+    }
+    Ok(MxlFlowReader::new(context.clone(), reader))
+}
+
 pub struct MxlInstance {
     context: Arc<InstanceContext>,
 }
@@ -65,24 +86,12 @@ impl MxlInstance {
     }
 
     pub fn create_flow_reader(&self, flow_id: &str) -> Result<MxlFlowReader> {
-        let flow_id = CString::new(flow_id)?;
-        let options = CString::new("")?;
-        let mut reader: mxl_sys::mxlFlowReader = std::ptr::null_mut();
-        unsafe {
-            Error::from_status(self.context.api.mxl_create_flow_reader(
-                self.context.instance,
-                flow_id.as_ptr(),
-                options.as_ptr(),
-                &mut reader,
-            ))?;
-        }
-        if reader.is_null() {
-            return Err(Error::Other("Failed to create flow reader.".to_string()));
-        }
-        Ok(MxlFlowReader::new(self.context.clone(), reader))
+        create_flow_reader(&self.context, flow_id)
     }
 
     pub fn create_flow_writer(&self, flow_id: &str) -> Result<MxlFlowWriter> {
+        let uuid = uuid::Uuid::parse_str(flow_id)
+            .map_err(|_| Error::Other("Invalid flow ID format.".to_string()))?;
         let flow_id = CString::new(flow_id)?;
         let options = CString::new("")?;
         let mut writer: mxl_sys::mxlFlowWriter = std::ptr::null_mut();
@@ -97,7 +106,7 @@ impl MxlInstance {
         if writer.is_null() {
             return Err(Error::Other("Failed to create flow writer.".to_string()));
         }
-        Ok(MxlFlowWriter::new(self.context.clone(), writer))
+        Ok(MxlFlowWriter::new(self.context.clone(), writer, uuid))
     }
 
     /// For now, we provide direct access to the MXL API for creating and

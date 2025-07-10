@@ -5,7 +5,9 @@ mod flow_reader;
 mod flow_writer;
 mod grain_data;
 mod grain_write_access;
+mod grain_writer;
 mod instance;
+mod samples_writer;
 
 pub mod config;
 pub mod tools;
