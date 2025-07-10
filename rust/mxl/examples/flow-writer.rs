@@ -51,13 +51,13 @@ fn main() -> Result<(), mxl::Error> {
             remaining_grains = Some(count - 1);
         }
 
-        let mut grain_writer = writer.open_grain(grain_index)?;
-        let payload = grain_writer.payload_mut();
+        let mut grain_writer_access = writer.open_grain(grain_index)?;
+        let payload = grain_writer_access.payload_mut();
         let payload_len = payload.len();
         for i in 0..payload_len {
             payload[i] = ((i as u64 + grain_index) % 256) as u8;
         }
-        grain_writer.commit(payload_len as u32)?;
+        grain_writer_access.commit(payload_len as u32)?;
 
         let timestamp = mxl_instance.index_to_timestamp(grain_index + 1, &grain_rate)?;
         let sleep_duration = mxl_instance.get_duration_until_index(grain_index + 1, &grain_rate)?;

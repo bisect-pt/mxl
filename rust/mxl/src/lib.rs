@@ -4,7 +4,7 @@ mod flow;
 mod flow_reader;
 mod flow_writer;
 mod grain_data;
-mod grain_writer;
+mod grain_write_access;
 mod instance;
 
 pub mod config;
@@ -16,5 +16,5 @@ pub use flow::*;
 pub use flow_reader::MxlFlowReader;
 pub use flow_writer::MxlFlowWriter;
 pub use grain_data::*;
-pub use grain_writer::GrainWriter;
+pub use grain_write_access::GrainWriteAccess;
 pub use instance::MxlInstance;

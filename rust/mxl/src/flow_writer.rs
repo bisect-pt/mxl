@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Error, Result, grain_writer::GrainWriter, instance::InstanceContext};
+use crate::{Error, Result, grain_write_access::GrainWriteAccess, instance::InstanceContext};
 
 /// MXL Flow Writer for discrete flows (grain-based data like video frames)
 pub struct MxlFlowWriter {
@@ -21,7 +21,7 @@ impl MxlFlowWriter {
     /// same time. For this reason, there is no protection on the Rust level against trying to open
     /// multiple grains. If the TODO ever gets removed, it may be worth considering pattern where
     /// opening grain would consume the writer and then return it back on commit or cancel.
-    pub fn open_grain<'a>(&'a self, index: u64) -> Result<GrainWriter<'a>> {
+    pub fn open_grain<'a>(&'a self, index: u64) -> Result<GrainWriteAccess<'a>> {
         let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         unsafe {
@@ -40,7 +40,7 @@ impl MxlFlowWriter {
             )));
         }
 
-        Ok(GrainWriter::new(
+        Ok(GrainWriteAccess::new(
             self.context.clone(),
             self.writer,
             grain_info,

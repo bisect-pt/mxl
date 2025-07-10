@@ -8,7 +8,7 @@ use crate::{Error, Result, instance::InstanceContext};
 /// RAII grain writing session
 ///
 /// Automatically cancels the grain if not explicitly committed.
-pub struct GrainWriter<'a> {
+pub struct GrainWriteAccess<'a> {
     context: Arc<InstanceContext>,
     writer: mxl_sys::mxlFlowWriter,
     grain_info: mxl_sys::GrainInfo,
@@ -18,7 +18,7 @@ pub struct GrainWriter<'a> {
     phantom: PhantomData<&'a ()>,
 }
 
-impl<'a> GrainWriter<'a> {
+impl<'a> GrainWriteAccess<'a> {
     pub(crate) fn new(
         context: Arc<InstanceContext>,
         writer: mxl_sys::mxlFlowWriter,
@@ -84,7 +84,7 @@ impl<'a> GrainWriter<'a> {
     }
 }
 
-impl<'a> Drop for GrainWriter<'a> {
+impl<'a> Drop for GrainWriteAccess<'a> {
     fn drop(&mut self) {
         if !self.committed_or_canceled {
             if let Err(error) = unsafe {
