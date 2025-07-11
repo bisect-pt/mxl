@@ -38,9 +38,9 @@ fn basic_mxl_writing_reading() {
         .unwrap();
     let flow_info = flow_reader.get_info().unwrap();
     let rate = flow_info.discrete_flow_info().unwrap().grainRate;
-    let current_head_index = mxl_instance.get_current_head_index(&rate);
+    let current_index = mxl_instance.get_current_index(&rate);
     let grain_data = flow_reader
-        .get_complete_grain(current_head_index, Duration::from_secs(5))
+        .get_complete_grain(current_index, Duration::from_secs(5))
         .unwrap();
     let grain_data: OwnedGrainData = grain_data.into();
     info!("Grain data len: {:?}", grain_data.payload.len());

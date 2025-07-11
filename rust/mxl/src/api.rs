@@ -121,19 +121,19 @@ pub struct MxlApi {
     mxl_flow_writer_commit_samples:
         unsafe extern "C" fn(writer: mxl_sys::mxlFlowWriter) -> mxl_sys::mxlStatus,
     #[allow(non_snake_case)]
-    #[dlopen2_name = "mxlGetCurrentHeadIndex"]
-    mxl_get_current_head_index: unsafe extern "C" fn(editRate: *const mxl_sys::Rational) -> u64,
+    #[dlopen2_name = "mxlGetCurrentIndex"]
+    mxl_get_current_index: unsafe extern "C" fn(editRate: *const mxl_sys::Rational) -> u64,
     #[allow(non_snake_case)]
-    #[dlopen2_name = "mxlGetNsUntilHeadIndex"]
-    mxl_get_ns_until_head_index:
+    #[dlopen2_name = "mxlGetNsUntilIndex"]
+    mxl_get_ns_until_index:
         unsafe extern "C" fn(index: u64, editRate: *const mxl_sys::Rational) -> u64,
     #[allow(non_snake_case)]
-    #[dlopen2_name = "mxlTimestampToHeadIndex"]
-    mxl_timestamp_to_head_index:
+    #[dlopen2_name = "mxlTimestampToIndex"]
+    mxl_timestamp_to_index:
         unsafe extern "C" fn(editRate: *const mxl_sys::Rational, timestamp: u64) -> u64,
     #[allow(non_snake_case)]
-    #[dlopen2_name = "mxlHeadIndexToTimestamp"]
-    mxl_head_index_to_timestamp:
+    #[dlopen2_name = "mxlIndexToTimestamp"]
+    mxl_index_to_timestamp:
         unsafe extern "C" fn(editRate: *const mxl_sys::Rational, index: u64) -> u64,
     #[dlopen2_name = "mxlSleepForNs"]
     mxl_sleep_for_ns: unsafe extern "C" fn(ns: u64),

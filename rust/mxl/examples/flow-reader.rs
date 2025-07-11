@@ -27,11 +27,11 @@ fn main() -> Result<(), mxl::Error> {
     let reader = mxl_instance.create_flow_reader(&opts.flow_id)?;
     let flow_info = reader.get_info()?;
     let rate = flow_info.discrete_flow_info()?.grainRate;
-    let current_head_index = mxl_instance.get_current_head_index(&rate);
+    let current_index = mxl_instance.get_current_index(&rate);
 
     info!("Grain rate: {}/{}", rate.numerator, rate.denominator);
 
-    for index in current_head_index.. {
+    for index in current_index.. {
         let grain_data = reader.get_complete_grain(index, READ_TIMEOUT)?;
         info!(
             "Index: {index} Grain data len: {:?}",

@@ -78,8 +78,8 @@ impl MxlInstance {
         Ok(MxlFlowReader::new(self.context.clone(), reader))
     }
 
-    pub fn get_current_head_index(&self, rational: &mxl_sys::Rational) -> u64 {
-        unsafe { self.context.api.mxl_get_current_head_index(rational) }
+    pub fn get_current_index(&self, rational: &mxl_sys::Rational) -> u64 {
+        unsafe { self.context.api.mxl_get_current_index(rational) }
     }
 
     /// This function forces the destruction of the MXL instance.
