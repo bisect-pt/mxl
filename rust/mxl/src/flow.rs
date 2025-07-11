@@ -44,8 +44,22 @@ impl FlowInfo {
         Ok(unsafe { &self.value.__bindgen_anon_1.discrete })
     }
 
+    pub fn continuous_flow_info(&self) -> Result<&mxl_sys::ContinuousFlowInfo> {
+        if is_discrete_data_format(self.value.common.format) {
+            return Err(Error::Other(format!(
+                "Flow format is {}, audio required.",
+                self.value.common.format
+            )));
+        }
+        Ok(unsafe { &self.value.__bindgen_anon_1.continuous })
+    }
+
     pub fn common_flow_info(&self) -> CommonFlowInfo {
         CommonFlowInfo(&self.value.common)
+    }
+
+    pub fn is_discrete_flow(&self) -> bool {
+        is_discrete_data_format(self.value.common.format)
     }
 }
 

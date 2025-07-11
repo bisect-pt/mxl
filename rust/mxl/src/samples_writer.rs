@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::samples_write_access::SamplesWriteAccess;
 use crate::{Error, Result, instance::InstanceContext};
 
 /// MXL Flow Writer for continuous flows (samples-based data like audio)
@@ -15,6 +16,24 @@ impl SamplesWriter {
 
     pub fn destroy(mut self) -> Result<()> {
         self.destroy_inner()
+    }
+
+    pub fn open_samples<'a>(&'a self, index: u64, count: usize) -> Result<SamplesWriteAccess<'a>> {
+        let mut buffer_slice: mxl_sys::MutableWrappedMultiBufferSlice =
+            unsafe { std::mem::zeroed() };
+        unsafe {
+            Error::from_status(self.context.api.mxl_flow_writer_open_samples(
+                self.writer,
+                index,
+                count,
+                &mut buffer_slice,
+            ))?;
+        }
+        Ok(SamplesWriteAccess::new(
+            self.context.clone(),
+            self.writer,
+            buffer_slice,
+        ))
     }
 
     fn destroy_inner(&mut self) -> Result<()> {
