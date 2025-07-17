@@ -28,6 +28,18 @@ fn main() -> Result<(), mxl::Error> {
     let mxl_instance = mxl::MxlInstance::new(mxl_api, &opts.mxl_domain, "")?;
     let reader = mxl_instance.create_flow_reader(&opts.flow_id)?;
     let flow_info = reader.get_info()?;
+    if flow_info.is_discrete_flow() {
+        read_grains(mxl_instance, reader.to_grain_reader()?, flow_info)
+    } else {
+        read_samples(mxl_instance, reader.to_samples_reader()?, flow_info)
+    }
+}
+
+fn read_grains(
+    mxl_instance: mxl::MxlInstance,
+    reader: mxl::GrainReader,
+    flow_info: mxl::FlowInfo,
+) -> Result<(), mxl::Error> {
     let rate = flow_info.discrete_flow_info()?.grainRate;
     let current_index = mxl_instance.get_current_index(&rate);
 
@@ -42,4 +54,12 @@ fn main() -> Result<(), mxl::Error> {
     }
 
     Ok(())
+}
+
+fn read_samples(
+    _mxl_instance: mxl::MxlInstance,
+    _reader: mxl::SamplesReader,
+    _flow_info: mxl::FlowInfo,
+) -> Result<(), mxl::Error> {
+    todo!()
 }

@@ -1,10 +1,24 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use crate::{Error, GrainData, Result, flow::FlowInfo, instance::InstanceContext};
+use crate::flow::is_discrete_data_format;
+use crate::grain_reader::GrainReader;
+use crate::samples_reader::SamplesReader;
+use crate::{DataFormat, Error, Result, flow::FlowInfo, instance::InstanceContext};
 
 pub struct MxlFlowReader {
     context: Arc<InstanceContext>,
     reader: mxl_sys::mxlFlowReader,
+}
+
+pub(crate) fn get_flow_info(
+    context: &Arc<InstanceContext>,
+    reader: mxl_sys::mxlFlowReader,
+) -> Result<FlowInfo> {
+    let mut flow_info: mxl_sys::FlowInfo = unsafe { std::mem::zeroed() };
+    unsafe {
+        Error::from_status(context.api.mxl_flow_reader_get_info(reader, &mut flow_info))?;
+    }
+    Ok(FlowInfo { value: flow_info })
 }
 
 impl MxlFlowReader {
@@ -12,85 +26,45 @@ impl MxlFlowReader {
         Self { context, reader }
     }
 
-    pub fn destroy(mut self) -> Result<()> {
-        self.destroy_inner()
-    }
-
     pub fn get_info(&self) -> Result<FlowInfo> {
-        let mut flow_info: mxl_sys::FlowInfo = unsafe { std::mem::zeroed() };
-        unsafe {
-            Error::from_status(
-                self.context
-                    .api
-                    .mxl_flow_reader_get_info(self.reader, &mut flow_info),
-            )?;
-        }
-        Ok(FlowInfo { value: flow_info })
+        get_flow_info(&self.context, self.reader)
     }
 
-    pub fn get_complete_grain<'a>(
-        &'a self,
-        index: u64,
-        timeout: Duration,
-    ) -> Result<GrainData<'a>> {
-        let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
-        let mut payload_ptr: *mut u8 = std::ptr::null_mut();
-        let timeout_ns = timeout.as_nanos() as u64;
-        loop {
-            unsafe {
-                Error::from_status(self.context.api.mxl_flow_reader_get_grain(
-                    self.reader,
-                    index,
-                    timeout_ns,
-                    &mut grain_info,
-                    &mut payload_ptr,
-                ))?;
-            }
-            if grain_info.commitedSize != grain_info.grainSize {
-                // We don't need partial grains. Wait for the grain to be complete.
-                continue;
-            }
-            if payload_ptr.is_null() {
-                return Err(Error::Other(format!(
-                    "Failed to get grain payload for index {}.",
-                    index
-                )));
-            }
-            break;
+    pub fn to_grain_reader(mut self) -> Result<GrainReader> {
+        let flow_type = self.get_info()?.value.common.format;
+        if !is_discrete_data_format(flow_type) {
+            return Err(Error::Other(format!(
+                "Cannot convert MxlFlowReader to GrainReader for continuous flow of type \"{:?}\".",
+                DataFormat::from(flow_type)
+            )));
         }
-
-        // SAFETY
-        // We know that the lifetime is as long as the flow, so it is at least self's lifetime.
-        // It may happen that the buffer is overwritten by a subsequent write, but it is safe.
-        let user_data: &'a [u8] =
-            unsafe { std::mem::transmute::<&[u8], &'a [u8]>(&grain_info.userData) };
-
-        let payload =
-            unsafe { std::slice::from_raw_parts(payload_ptr, grain_info.grainSize as usize) };
-
-        Ok(GrainData { user_data, payload })
+        let result = GrainReader::new(self.context.clone(), self.reader);
+        self.reader = std::ptr::null_mut();
+        Ok(result)
     }
 
-    fn destroy_inner(&mut self) -> Result<()> {
-        if self.reader.is_null() {
-            return Err(Error::InvalidArg);
+    pub fn to_samples_reader(mut self) -> Result<SamplesReader> {
+        let flow_type = self.get_info()?.value.common.format;
+        if is_discrete_data_format(flow_type) {
+            return Err(Error::Other(format!(
+                "Cannot convert MxlFlowReader to SamplesReader for discrete flow of type \"{:?}\".",
+                DataFormat::from(flow_type)
+            )));
         }
-
-        let mut reader = std::ptr::null_mut();
-        std::mem::swap(&mut self.reader, &mut reader);
-
-        Error::from_status(unsafe {
-            self.context
-                .api
-                .mxl_release_flow_reader(self.context.instance, reader)
-        })
+        let result = SamplesReader::new(self.context.clone(), self.reader);
+        self.reader = std::ptr::null_mut();
+        Ok(result)
     }
 }
 
 impl Drop for MxlFlowReader {
     fn drop(&mut self) {
         if !self.reader.is_null() {
-            if let Err(err) = self.destroy_inner() {
+            if let Err(err) = Error::from_status(unsafe {
+                self.context
+                    .api
+                    .mxl_release_flow_reader(self.context.instance, self.reader)
+            }) {
                 tracing::error!("Failed to release MXL flow reader: {:?}", err);
             }
         }

@@ -40,7 +40,7 @@ fn setup_test() -> mxl::MxlInstance {
 }
 
 #[test]
-fn basic_mxl_writing_reading() {
+fn basic_mxl_grain_writing_reading() {
     let mxl_instance = setup_test();
     let flow_config_file = mxl::config::get_mxl_repo_root().join("lib/tests/data/v210_flow.json");
     let flow_def = mxl::tools::read_file(flow_config_file.as_path())
@@ -57,17 +57,18 @@ fn basic_mxl_writing_reading() {
     let flow_writer = mxl_instance.create_flow_writer(flow_id.as_str()).unwrap();
     let grain_writer = flow_writer.to_grain_writer().unwrap();
     let flow_reader = mxl_instance.create_flow_reader(flow_id.as_str()).unwrap();
+    let grain_reader = flow_reader.to_grain_reader().unwrap();
     let rate = flow_info.discrete_flow_info().unwrap().grainRate;
     let current_index = mxl_instance.get_current_index(&rate);
     let grain_write_access = grain_writer.open_grain(current_index).unwrap();
     let grain_size = grain_write_access.max_size();
     grain_write_access.commit(grain_size).unwrap();
-    let grain_data = flow_reader
+    let grain_data = grain_reader
         .get_complete_grain(current_index, Duration::from_secs(5))
         .unwrap();
     let grain_data: OwnedGrainData = grain_data.into();
     info!("Grain data len: {:?}", grain_data.payload.len());
-    flow_reader.destroy().unwrap();
+    grain_reader.destroy().unwrap();
     grain_writer.destroy().unwrap();
     mxl_instance.destroy_flow(flow_id.as_str()).unwrap();
     unsafe { mxl_instance.destroy() }.unwrap();
