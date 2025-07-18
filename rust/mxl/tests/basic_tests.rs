@@ -76,7 +76,7 @@ fn basic_mxl_grain_writing_reading() {
     grain_reader.destroy().unwrap();
     grain_writer.destroy().unwrap();
     mxl_instance.destroy_flow(flow_id.as_str()).unwrap();
-    unsafe { mxl_instance.destroy() }.unwrap();
+    mxl_instance.destroy().unwrap();
 }
 
 #[test]
@@ -102,5 +102,5 @@ fn basic_mxl_samples_writing_reading() {
     samples_reader.destroy().unwrap();
     samples_writer.destroy().unwrap();
     mxl_instance.destroy_flow(flow_id.as_str()).unwrap();
-    unsafe { mxl_instance.destroy() }.unwrap();
+    mxl_instance.destroy().unwrap();
 }

@@ -19,14 +19,8 @@ unsafe impl Sync for InstanceContext {}
 
 impl InstanceContext {
     /// This function forces the destruction of the MXL instance.
-    /// It is not safe as other objects may still be using it.
-    /// It is meant for testing purposes only.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that no other objects are using the MXL instance when this function is called.
-    /// Calling this function while other references exist may lead to undefined behavior.
-    pub unsafe fn destroy(&mut self) -> Result<()> {
+    /// It is meant mainly for testing purposes.
+    pub fn destroy(mut self) -> Result<()> {
         unsafe {
             let mut instance = std::ptr::null_mut();
             std::mem::swap(&mut self.instance, &mut instance);
@@ -201,17 +195,12 @@ impl MxlInstance {
     }
 
     /// This function forces the destruction of the MXL instance.
-    /// It is not safe as other objects may still be using it.
-    /// It is meant for testing purposes only.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that no other objects are using the MXL instance when this function is called.
-    /// Calling this function while other references exist will lead to panic.
-    pub unsafe fn destroy(self) -> Result<()> {
-        unsafe {
-            let mut context = Arc::into_inner(self.context).unwrap();
-            context.destroy()
-        }
+    /// It is meant mainly for testing purposes.
+    /// The caller must ensure that no other objects are using the MXL instance when this function
+    /// is called.
+    pub fn destroy(self) -> Result<()> {
+        let context = Arc::into_inner(self.context)
+            .ok_or_else(|| Error::Other("Instance is still in use.".to_string()))?;
+        context.destroy()
     }
 }
