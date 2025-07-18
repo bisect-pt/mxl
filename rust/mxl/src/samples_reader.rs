@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::flow_reader::get_flow_info;
+use crate::samples_data::SamplesData;
 use crate::{Error, Result, flow::FlowInfo, instance::InstanceContext};
 
 pub struct SamplesReader {
@@ -19,6 +20,19 @@ impl SamplesReader {
 
     pub fn get_info(&self) -> Result<FlowInfo> {
         get_flow_info(&self.context, self.reader)
+    }
+
+    pub fn get_samples(&self, index: u64, count: usize) -> Result<SamplesData> {
+        let mut buffer_slice: mxl_sys::WrappedMultiBufferSlice = unsafe { std::mem::zeroed() };
+        unsafe {
+            Error::from_status(self.context.api.mxl_flow_reader_get_samples(
+                self.reader,
+                index,
+                count,
+                &mut buffer_slice,
+            ))?;
+        }
+        Ok(SamplesData::new(buffer_slice))
     }
 
     fn destroy_inner(&mut self) -> Result<()> {

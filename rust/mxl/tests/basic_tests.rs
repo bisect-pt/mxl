@@ -4,24 +4,22 @@
 /// change in the future. For now, feel free to just edit the path to your library.
 use std::time::Duration;
 
-use mxl::{OwnedGrainData, config::get_mxf_so_path};
+use mxl::{MxlInstance, OwnedGrainData, OwnedSamplesData, config::get_mxf_so_path};
 use tracing::info;
 
 static LOG_ONCE: std::sync::Once = std::sync::Once::new();
 
-fn setup_empty_domain() -> String {
-    // TODO: Randomize the domain name to allow parallel tests run?
-    //       On the other hand, some tests may leave stuff behind, this way we do not keep
-    //       increasing garbage from the tests.
-    let result = "/dev/shm/mxl_rust_unit_tests_domain";
-    if std::path::Path::new(result).exists() {
-        std::fs::remove_dir_all(result).expect("Failed to remove existing test domain directory");
+fn setup_empty_domain(test: &str) -> String {
+    let result = format!("/dev/shm/mxl_rust_unit_tests_domain_{}", test);
+    if std::path::Path::new(result.as_str()).exists() {
+        std::fs::remove_dir_all(result.as_str())
+            .expect("Failed to remove existing test domain directory");
     }
-    std::fs::create_dir_all(result).expect("Failed to create test domain directory");
-    result.to_string()
+    std::fs::create_dir_all(result.as_str()).expect("Failed to create test domain directory");
+    result
 }
 
-fn setup_test() -> mxl::MxlInstance {
+fn setup_test(test: &str) -> mxl::MxlInstance {
     // Set up the logging to use the RUST_LOG environment variable and if not present, print INFO
     // and higher.
     LOG_ONCE.call_once(|| {
@@ -35,14 +33,15 @@ fn setup_test() -> mxl::MxlInstance {
     });
 
     let mxl_api = mxl::load_api(get_mxf_so_path()).unwrap();
-    let domain = setup_empty_domain();
+    let domain = setup_empty_domain(test);
     mxl::MxlInstance::new(mxl_api, &domain, "").unwrap()
 }
 
-#[test]
-fn basic_mxl_grain_writing_reading() {
-    let mxl_instance = setup_test();
-    let flow_config_file = mxl::config::get_mxl_repo_root().join("lib/tests/data/v210_flow.json");
+fn prepare_flow_info<P: AsRef<std::path::Path>>(
+    mxl_instance: &MxlInstance,
+    path: P,
+) -> mxl::FlowInfo {
+    let flow_config_file = mxl::config::get_mxl_repo_root().join(path);
     let flow_def = mxl::tools::read_file(flow_config_file.as_path())
         .map_err(|error| {
             mxl::Error::Other(format!(
@@ -52,7 +51,13 @@ fn basic_mxl_grain_writing_reading() {
             ))
         })
         .unwrap();
-    let flow_info = mxl_instance.create_flow(flow_def.as_str(), None).unwrap();
+    mxl_instance.create_flow(flow_def.as_str(), None).unwrap()
+}
+
+#[test]
+fn basic_mxl_grain_writing_reading() {
+    let mxl_instance = setup_test("grains");
+    let flow_info = prepare_flow_info(&mxl_instance, "lib/tests/data/v210_flow.json");
     let flow_id = flow_info.common_flow_info().id().to_string();
     let flow_writer = mxl_instance.create_flow_writer(flow_id.as_str()).unwrap();
     let grain_writer = flow_writer.to_grain_writer().unwrap();
@@ -70,6 +75,32 @@ fn basic_mxl_grain_writing_reading() {
     info!("Grain data len: {:?}", grain_data.payload.len());
     grain_reader.destroy().unwrap();
     grain_writer.destroy().unwrap();
+    mxl_instance.destroy_flow(flow_id.as_str()).unwrap();
+    unsafe { mxl_instance.destroy() }.unwrap();
+}
+
+#[test]
+fn basic_mxl_samples_writing_reading() {
+    let mxl_instance = setup_test("samples");
+    let flow_info = prepare_flow_info(&mxl_instance, "lib/tests/data/audio_flow.json");
+    let flow_id = flow_info.common_flow_info().id().to_string();
+    let flow_writer = mxl_instance.create_flow_writer(flow_id.as_str()).unwrap();
+    let samples_writer = flow_writer.to_samples_writer().unwrap();
+    let flow_reader = mxl_instance.create_flow_reader(flow_id.as_str()).unwrap();
+    let samples_reader = flow_reader.to_samples_reader().unwrap();
+    let rate = flow_info.continuous_flow_info().unwrap().sampleRate;
+    let current_index = mxl_instance.get_current_index(&rate);
+    let samples_write_access = samples_writer.open_samples(current_index, 42).unwrap();
+    samples_write_access.commit().unwrap();
+    let samples_data = samples_reader.get_samples(current_index, 42).unwrap();
+    let samples_data: OwnedSamplesData = samples_data.into();
+    info!(
+        "Samples data contains {} channels(s), channel 0 has {} byte(s).",
+        samples_data.payload.len(),
+        samples_data.payload[0].len()
+    );
+    samples_reader.destroy().unwrap();
+    samples_writer.destroy().unwrap();
     mxl_instance.destroy_flow(flow_id.as_str()).unwrap();
     unsafe { mxl_instance.destroy() }.unwrap();
 }
