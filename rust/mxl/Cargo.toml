@@ -15,3 +15,6 @@ uuid.workspace = true
 [dev-dependencies]
 clap.workspace = true
 tracing-subscriber.workspace = true
+
+[features]
+mxl-not-built = ["mxl-sys/mxl-not-built"]

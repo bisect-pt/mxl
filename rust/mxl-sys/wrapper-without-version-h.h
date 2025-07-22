@@ -5,4 +5,3 @@
 #include "mxl/platform.h"
 #include "mxl/rational.h"
 #include "mxl/time.h"
-#include "mxl/version.h"

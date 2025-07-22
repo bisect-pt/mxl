@@ -8,3 +8,6 @@ version.workspace = true
 
 [build-dependencies]
 bindgen.workspace = true
+
+[features]
+mxl-not-built = []
