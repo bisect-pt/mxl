@@ -1,5 +1,6 @@
-use crate::Error;
 use std::marker::PhantomData;
+
+use crate::Error;
 
 pub struct SamplesData<'a> {
     buffer_slice: mxl_sys::WrappedMultiBufferSlice,

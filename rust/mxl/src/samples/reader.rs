@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use crate::flow_reader::get_flow_info;
-use crate::samples_data::SamplesData;
-use crate::{Error, Result, flow::FlowInfo, instance::InstanceContext};
+use crate::{
+    Error, Result, SamplesData,
+    flow::{FlowInfo, reader::get_flow_info},
+    instance::InstanceContext,
+};
 
 pub struct SamplesReader {
     context: Arc<InstanceContext>,

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use crate::samples_write_access::SamplesWriteAccess;
-use crate::{Error, Result, instance::InstanceContext};
+use crate::{instance::InstanceContext, Error, Result, SamplesWriteAccess};
 
 /// MXL Flow Writer for continuous flows (samples-based data like audio)
 pub struct SamplesWriter {

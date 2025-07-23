@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use crate::flow::is_discrete_data_format;
-use crate::grain_reader::GrainReader;
-use crate::samples_reader::SamplesReader;
-use crate::{DataFormat, Error, Result, flow::FlowInfo, instance::InstanceContext};
+use crate::{
+    DataFormat, Error, GrainReader, Result, SamplesReader,
+    flow::{FlowInfo, is_discrete_data_format},
+    instance::InstanceContext,
+};
 
 pub struct MxlFlowReader {
     context: Arc<InstanceContext>,

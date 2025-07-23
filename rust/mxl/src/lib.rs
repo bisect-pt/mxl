@@ -1,30 +1,20 @@
 mod api;
 mod error;
 mod flow;
-mod flow_reader;
-mod flow_writer;
-mod grain_data;
-mod grain_reader;
-mod grain_write_access;
-mod grain_writer;
+mod grain;
 mod instance;
-mod samples_data;
-mod samples_reader;
-mod samples_write_access;
-mod samples_writer;
+mod samples;
 
 pub mod config;
 pub mod tools;
 
 pub use api::{MxlApi, load_api};
 pub use error::{Error, Result};
-pub use flow::*;
-pub use flow_reader::MxlFlowReader;
-pub use flow_writer::MxlFlowWriter;
-pub use grain_data::*;
-pub use grain_reader::GrainReader;
-pub use grain_write_access::GrainWriteAccess;
+pub use flow::{reader::MxlFlowReader, writer::MxlFlowWriter, *};
+pub use grain::{
+    data::*, reader::GrainReader, write_access::GrainWriteAccess, writer::GrainWriter,
+};
 pub use instance::MxlInstance;
-pub use samples_data::*;
-pub use samples_reader::SamplesReader;
-pub use samples_write_access::SamplesWriteAccess;
+pub use samples::{
+    data::*, reader::SamplesReader, write_access::SamplesWriteAccess, writer::SamplesWriter,
+};

@@ -1,3 +1,6 @@
+pub mod reader;
+pub mod writer;
+
 use uuid::Uuid;
 
 use crate::{Error, Result};

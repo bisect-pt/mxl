@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::{Error, Result, grain_write_access::GrainWriteAccess, instance::InstanceContext};
+use super::write_access::GrainWriteAccess;
+
+use crate::{instance::InstanceContext, Error, Result};
 
 /// MXL Flow Writer for discrete flows (grain-based data like video frames)
 pub struct GrainWriter {
@@ -39,8 +41,7 @@ impl GrainWriter {
 
         if payload_ptr.is_null() {
             return Err(Error::Other(format!(
-                "Failed to open grain payload for index {}.",
-                index
+                "Failed to open grain payload for index {index}.",
             )));
         }
 

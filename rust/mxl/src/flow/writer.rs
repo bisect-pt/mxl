@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use crate::flow::is_discrete_data_format;
-use crate::grain_writer::GrainWriter;
-use crate::instance::create_flow_reader;
-use crate::samples_writer::SamplesWriter;
-use crate::{DataFormat, Error, Result, instance::InstanceContext};
+use crate::{
+    flow::is_discrete_data_format,
+    instance::{create_flow_reader, InstanceContext},
+    DataFormat, Error, GrainWriter, Result, SamplesWriter,
+};
 
 /// Generic MXL Flow Writer, which can be further used to build either the "discrete" (grain-based
 /// data like video frames or meta) or "continuous" (audio samples) flow writers in MXL terminology.

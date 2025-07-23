@@ -1,10 +1,8 @@
-use std::marker::PhantomData;
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
 use tracing::error;
 
-use crate::Error;
-use crate::instance::InstanceContext;
+use crate::{instance::InstanceContext, Error};
 
 /// RAII samples writing session
 ///

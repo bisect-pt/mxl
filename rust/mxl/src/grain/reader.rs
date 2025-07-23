@@ -1,7 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::flow_reader::get_flow_info;
-use crate::{Error, GrainData, Result, flow::FlowInfo, instance::InstanceContext};
+use crate::{
+    flow::{reader::get_flow_info, FlowInfo},
+    instance::InstanceContext,
+    Error, GrainData, Result,
+};
 
 pub struct GrainReader {
     context: Arc<InstanceContext>,
@@ -49,8 +52,7 @@ impl GrainReader {
             }
             if payload_ptr.is_null() {
                 return Err(Error::Other(format!(
-                    "Failed to get grain payload for index {}.",
-                    index
+                    "Failed to get grain payload for index {index}.",
                 )));
             }
             break;
