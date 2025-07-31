@@ -14,6 +14,10 @@ pub struct MxlFlowWriter {
     id: uuid::Uuid,
 }
 
+/// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
+/// there is no reason to not implement `Send`.
+unsafe impl Send for MxlFlowWriter {}
+
 impl MxlFlowWriter {
     pub(crate) fn new(
         context: Arc<InstanceContext>,

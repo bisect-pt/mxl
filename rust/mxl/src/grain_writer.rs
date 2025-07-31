@@ -8,6 +8,10 @@ pub struct GrainWriter {
     writer: mxl_sys::mxlFlowWriter,
 }
 
+/// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
+/// there is no reason to not implement `Send`.
+unsafe impl Send for GrainWriter {}
+
 impl GrainWriter {
     pub(crate) fn new(context: Arc<InstanceContext>, writer: mxl_sys::mxlFlowWriter) -> Self {
         Self { context, writer }
