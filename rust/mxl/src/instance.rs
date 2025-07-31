@@ -14,6 +14,8 @@ pub(crate) struct InstanceContext {
 }
 
 // Allow sharing the context across threads and tasks freely.
+// This is safe because the MXL API is supposed to be thread-safe at the
+// instance level (careful, not at the reader / writer level).
 unsafe impl Send for InstanceContext {}
 unsafe impl Sync for InstanceContext {}
 
@@ -59,6 +61,7 @@ pub(crate) fn create_flow_reader(
     Ok(MxlFlowReader::new(context.clone(), reader))
 }
 
+#[derive(Clone)]
 pub struct MxlInstance {
     context: Arc<InstanceContext>,
 }
