@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 2025 Contributors to the Media eXchange Layer project.
+// SPDX-License-Identifier: Apache-2.0
+
 pub fn setup_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(

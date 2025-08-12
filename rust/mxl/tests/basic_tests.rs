@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 2025 Contributors to the Media eXchange Layer project.
+// SPDX-License-Identifier: Apache-2.0
+
 /// Tests of the basic low level synchronous API.
 ///
 /// The tests now require an MXL library of a specific name to be present in the system. This should
