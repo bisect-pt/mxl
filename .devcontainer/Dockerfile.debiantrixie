@@ -82,3 +82,7 @@ RUN git clone https://github.com/microsoft/vcpkg \
 ENV VCPKG_ROOT="/home/${USERNAME}/vcpkg"
 
 RUN rustup default 1.88.0
+
+# Install cargo nextest
+RUN mkdir -p ${CARGO_HOME:-~/.cargo}/bin
+RUN curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
