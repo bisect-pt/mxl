@@ -162,6 +162,37 @@ jobs:
               ctest --output-junit test-results.xml
             "
 
+      - name: Rust - run cargo clippy
+        run: |
+          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+            -i mxl_build_container_with_source \
+            bash -c "
+              export MXL_INSTALL_ROOT=/workspace/mxl/install && \
+              cd /workspace/mxl/rust && \
+              cargo clean && \
+              cargo clippy --locked
+            "
+
+      - name: Rust - run cargo build
+        run: |
+          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+            -i mxl_build_container_with_source \
+            bash -c "
+              export MXL_INSTALL_ROOT=/workspace/mxl/install && \
+              cd /workspace/mxl/rust && \
+              cargo build --release --all-targets --locked
+            "
+
+      - name: Rust - run cargo test
+        run: |
+          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+            -i mxl_build_container_with_source \
+            bash -c "
+              export MXL_INSTALL_ROOT=/workspace/mxl/install && \
+              cd /workspace/mxl/rust && \
+              cargo test --release --locked
+            "
+
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
