@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 2025 Contributors to the Media eXchange Layer project.
+// SPDX-License-Identifier: Apache-2.0
+
 pub fn read_file(file_path: impl AsRef<std::path::Path>) -> Result<String, std::io::Error> {
     use std::io::Read;
 
