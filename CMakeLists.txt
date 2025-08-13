@@ -43,6 +43,9 @@ if(ccache_executable)
     set(CMAKE_CXX_COMPILER_LAUNCHER ${ccache_executable})
 endif()
 
+option(BUILD_TESTS "Build the tests" OFF)
+option(BUILD_TOOLS "Build the tools" ON)
+
 # Enable testing for the project
 enable_testing()
 
