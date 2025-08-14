@@ -8,6 +8,7 @@ version.workspace = true
 
 [build-dependencies]
 bindgen.workspace = true
+cmake = "0.1.54"
 
 [features]
 mxl-not-built = []
