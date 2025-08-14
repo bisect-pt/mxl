@@ -37,6 +37,30 @@ fn get_bindgen_specs() -> BindgenSpecs {
             .to_string();
 
         includes_dirs.push(build_version_dir);
+
+        let mxl_version_out_path = manifest_dir.join("mxl");
+        if !fs::exists(&mxl_version_out_path)
+            .expect("Error checking if out path for version header file exists")
+        {
+            fs::create_dir(&mxl_version_out_path)
+                .expect("Failed to create out path for version header file");
+        }
+        let mxl_version_header = mxl_version_out_path.join("version.h");
+        println!("cargo:rerun-if-changed={}", mxl_version_header.display());
+
+        let dst = cmake::Config::new(repo_root)
+            .define("BUILD_TESTS", "OFF")
+            .define("BUILD_TOOLS", "OFF")
+            .build();
+
+        let mxl_version_location = dst.join("include").join("mxl").join("version.h");
+        assert!(matches!(std::fs::exists(&mxl_version_location), Ok(true)));
+
+        fs::copy(&mxl_version_location, &mxl_version_header)
+            .expect("Could copy mxl version header");
+
+        println!("cargo:rustc-link-search={}", dst.join("lib64").display());
+        println!("cargo:rustc-link-lib=mxl");
     }
 
     BindgenSpecs {
@@ -49,31 +73,6 @@ fn main() {
     let bindgen_specs = get_bindgen_specs();
     for include_dir in &bindgen_specs.includes_dirs {
         println!("cargo:include={include_dir}");
-    }
-
-    if cfg!(not(feature = "mxl-not-built")) {
-        // TODO: figure out when this has to be rebuilt
-        let mxl_version_out_path =
-            PathBuf::from(&env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"))
-                .join("mxl");
-        if !fs::exists(&mxl_version_out_path).expect("Error checking if out path exists") {
-            fs::create_dir(&mxl_version_out_path).expect("Failed to create out path");
-        }
-        let out_path = mxl_version_out_path.join("version.h");
-        println!("cargo:rerun-if-changed={}", out_path.display());
-
-        let dst = cmake::Config::new("../../")
-            .define("BUILD_TESTS", "OFF")
-            .define("BUILD_TOOLS", "OFF")
-            .build();
-
-        let mxl_version_location = dst.join("include").join("mxl").join("version.h");
-        assert!(matches!(std::fs::exists(&mxl_version_location), Ok(true)));
-
-        fs::copy(&mxl_version_location, &out_path).expect("Could copy mxl version");
-
-        println!("cargo:rustc-link-search={}", dst.join("lib64").display());
-        println!("cargo:rustc-link-lib=mxl");
     }
 
     let bindings = bindgen::builder()
