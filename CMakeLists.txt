@@ -22,6 +22,9 @@ else()
     string(APPEND mxl_VERSION ".0")
 endif()
 
+option(BUILD_TESTS "Build the tests" ON)
+option(BUILD_TOOLS "Build the tools" ON)
+
 project(mxl
     VERSION ${mxl_VERSION}
     LANGUAGES CXX C
@@ -36,9 +39,6 @@ if(ccache_executable)
     set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)
     set(CMAKE_CXX_COMPILER_LAUNCHER ${ccache_executable})
 endif()
-
-option(BUILD_TESTS "Build the tests" OFF)
-option(BUILD_TOOLS "Build the tools" ON)
 
 # Enable testing for the project
 enable_testing()
