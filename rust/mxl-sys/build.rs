@@ -49,7 +49,7 @@ fn get_bindgen_specs() -> BindgenSpecs {
         println!("cargo:rerun-if-changed={}", mxl_version_header.display());
 
         let dst = cmake::Config::new(repo_root)
-            .out_dir("build_dir")
+            .out_dir(build_dir)
             .define("BUILD_TESTS", "OFF")
             .define("BUILD_TOOLS", "OFF")
             .configure_arg(format!("--preset={BUILD_VARIANT}"))
