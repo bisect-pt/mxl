@@ -57,7 +57,7 @@ impl FlowInfo {
         Ok(unsafe { &self.value.__bindgen_anon_1.continuous })
     }
 
-    pub fn common_flow_info(&self) -> CommonFlowInfo {
+    pub fn common_flow_info(&self) -> CommonFlowInfo<'_> {
         CommonFlowInfo(&self.value.common)
     }
 
