@@ -1,9 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    flow::{reader::get_flow_info, FlowInfo},
-    instance::InstanceContext,
     Error, GrainData, Result,
+    flow::{FlowInfo, reader::get_flow_info},
+    instance::InstanceContext,
 };
 
 pub struct GrainReader {
@@ -88,10 +88,10 @@ impl GrainReader {
 
 impl Drop for GrainReader {
     fn drop(&mut self) {
-        if !self.reader.is_null() {
-            if let Err(err) = self.destroy_inner() {
-                tracing::error!("Failed to release MXL flow reader (discrete): {:?}", err);
-            }
+        if !self.reader.is_null()
+            && let Err(err) = self.destroy_inner()
+        {
+            tracing::error!("Failed to release MXL flow reader (discrete): {:?}", err);
         }
     }
 }

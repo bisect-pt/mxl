@@ -2,7 +2,7 @@ use std::{marker::PhantomData, sync::Arc};
 
 use tracing::error;
 
-use crate::{instance::InstanceContext, Error};
+use crate::{Error, instance::InstanceContext};
 
 /// RAII samples writing session
 ///
@@ -82,12 +82,12 @@ impl<'a> SamplesWriteAccess<'a> {
 
 impl<'a> Drop for SamplesWriteAccess<'a> {
     fn drop(&mut self) {
-        if !self.committed_or_canceled {
-            if let Err(error) = unsafe {
+        if !self.committed_or_canceled
+            && let Err(error) = unsafe {
                 Error::from_status(self.context.api.mxl_flow_writer_cancel_samples(self.writer))
-            } {
-                error!("Failed to cancel grain write on drop: {:?}", error);
             }
+        {
+            error!("Failed to cancel grain write on drop: {:?}", error);
         }
     }
 }

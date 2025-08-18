@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use crate::{
-    flow::is_discrete_data_format,
-    instance::{create_flow_reader, InstanceContext},
     DataFormat, Error, GrainWriter, Result, SamplesWriter,
+    flow::is_discrete_data_format,
+    instance::{InstanceContext, create_flow_reader},
 };
 
 /// Generic MXL Flow Writer, which can be further used to build either the "discrete" (grain-based
@@ -76,14 +76,14 @@ impl MxlFlowWriter {
 
 impl Drop for MxlFlowWriter {
     fn drop(&mut self) {
-        if !self.writer.is_null() {
-            if let Err(err) = Error::from_status(unsafe {
+        if !self.writer.is_null()
+            && let Err(err) = Error::from_status(unsafe {
                 self.context
                     .api
                     .mxl_release_flow_writer(self.context.instance, self.writer)
-            }) {
-                tracing::error!("Failed to release MXL flow writer: {:?}", err);
-            }
+            })
+        {
+            tracing::error!("Failed to release MXL flow writer: {:?}", err);
         }
     }
 }

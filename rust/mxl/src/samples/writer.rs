@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{instance::InstanceContext, Error, Result, SamplesWriteAccess};
+use crate::{Error, Result, SamplesWriteAccess, instance::InstanceContext};
 
 /// MXL Flow Writer for continuous flows (samples-based data like audio)
 pub struct SamplesWriter {
@@ -57,10 +57,10 @@ impl SamplesWriter {
 
 impl Drop for SamplesWriter {
     fn drop(&mut self) {
-        if !self.writer.is_null() {
-            if let Err(err) = self.destroy_inner() {
-                tracing::error!("Failed to release MXL flow writer (continuous): {:?}", err);
-            }
+        if !self.writer.is_null()
+            && let Err(err) = self.destroy_inner()
+        {
+            tracing::error!("Failed to release MXL flow writer (continuous): {:?}", err);
         }
     }
 }

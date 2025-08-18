@@ -64,14 +64,14 @@ impl MxlFlowReader {
 
 impl Drop for MxlFlowReader {
     fn drop(&mut self) {
-        if !self.reader.is_null() {
-            if let Err(err) = Error::from_status(unsafe {
+        if !self.reader.is_null()
+            && let Err(err) = Error::from_status(unsafe {
                 self.context
                     .api
                     .mxl_release_flow_reader(self.context.instance, self.reader)
-            }) {
-                tracing::error!("Failed to release MXL flow reader: {:?}", err);
-            }
+            })
+        {
+            tracing::error!("Failed to release MXL flow reader: {:?}", err);
         }
     }
 }

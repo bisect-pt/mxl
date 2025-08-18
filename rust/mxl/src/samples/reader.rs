@@ -59,10 +59,10 @@ impl SamplesReader {
 
 impl Drop for SamplesReader {
     fn drop(&mut self) {
-        if !self.reader.is_null() {
-            if let Err(err) = self.destroy_inner() {
-                tracing::error!("Failed to release MXL flow reader (continuous): {:?}", err);
-            }
+        if !self.reader.is_null()
+            && let Err(err) = self.destroy_inner()
+        {
+            tracing::error!("Failed to release MXL flow reader (continuous): {:?}", err);
         }
     }
 }

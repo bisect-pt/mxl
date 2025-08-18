@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::write_access::GrainWriteAccess;
 
-use crate::{instance::InstanceContext, Error, Result};
+use crate::{Error, Result, instance::InstanceContext};
 
 /// MXL Flow Writer for discrete flows (grain-based data like video frames)
 pub struct GrainWriter {
@@ -71,10 +71,10 @@ impl GrainWriter {
 
 impl Drop for GrainWriter {
     fn drop(&mut self) {
-        if !self.writer.is_null() {
-            if let Err(err) = self.destroy_inner() {
-                tracing::error!("Failed to release MXL flow writer (discrete): {:?}", err);
-            }
+        if !self.writer.is_null()
+            && let Err(err) = self.destroy_inner()
+        {
+            tracing::error!("Failed to release MXL flow writer (discrete): {:?}", err);
         }
     }
 }
