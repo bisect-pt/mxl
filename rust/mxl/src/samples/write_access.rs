@@ -16,7 +16,7 @@ use crate::{Error, instance::InstanceContext};
 pub struct SamplesWriteAccess<'a> {
     context: Arc<InstanceContext>,
     writer: mxl_sys::mxlFlowWriter,
-    buffer_slice: mxl_sys::MutableWrappedMultiBufferSlice,
+    buffer_slice: mxl_sys::mxlMutableWrappedMultiBufferSlice,
     /// Serves as a flag to know whether to cancel the samples on drop.
     committed_or_canceled: bool,
     phantom: PhantomData<&'a ()>,
@@ -26,7 +26,7 @@ impl<'a> SamplesWriteAccess<'a> {
     pub(crate) fn new(
         context: Arc<InstanceContext>,
         writer: mxl_sys::mxlFlowWriter,
-        buffer_slice: mxl_sys::MutableWrappedMultiBufferSlice,
+        buffer_slice: mxl_sys::mxlMutableWrappedMultiBufferSlice,
     ) -> Self {
         Self {
             context,

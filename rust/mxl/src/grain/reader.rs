@@ -36,7 +36,7 @@ impl GrainReader {
         index: u64,
         timeout: Duration,
     ) -> Result<GrainData<'a>> {
-        let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
+        let mut grain_info: mxl_sys::mxlGrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         let timeout_ns = timeout.as_nanos() as u64;
         loop {

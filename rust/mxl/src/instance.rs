@@ -115,7 +115,7 @@ impl MxlInstance {
     pub fn create_flow(&self, flow_def: &str, options: Option<&str>) -> Result<FlowInfo> {
         let flow_def = CString::new(flow_def)?;
         let options = CString::new(options.unwrap_or(""))?;
-        let mut info = std::mem::MaybeUninit::<mxl_sys::FlowInfo>::uninit();
+        let mut info = std::mem::MaybeUninit::<mxl_sys::mxlFlowInfo>::uninit();
 
         unsafe {
             Error::from_status(self.context.api.mxl_create_flow(
@@ -143,14 +143,14 @@ impl MxlInstance {
         Ok(())
     }
 
-    pub fn get_current_index(&self, rational: &mxl_sys::Rational) -> u64 {
+    pub fn get_current_index(&self, rational: &mxl_sys::mxlRational) -> u64 {
         unsafe { self.context.api.mxl_get_current_index(rational) }
     }
 
     pub fn get_duration_until_index(
         &self,
         index: u64,
-        rate: &mxl_sys::Rational,
+        rate: &mxl_sys::mxlRational,
     ) -> Result<std::time::Duration> {
         let duration_ns = unsafe { self.context.api.mxl_get_ns_until_index(index, rate) };
         if duration_ns == u64::MAX {
@@ -164,7 +164,7 @@ impl MxlInstance {
     }
 
     /// TODO: Make timestamp a strong type.
-    pub fn timestamp_to_index(&self, timestamp: u64, rate: &mxl_sys::Rational) -> Result<u64> {
+    pub fn timestamp_to_index(&self, timestamp: u64, rate: &mxl_sys::mxlRational) -> Result<u64> {
         let index = unsafe { self.context.api.mxl_timestamp_to_index(rate, timestamp) };
         if index == u64::MAX {
             Err(Error::Other(format!(
@@ -176,7 +176,7 @@ impl MxlInstance {
         }
     }
 
-    pub fn index_to_timestamp(&self, index: u64, rate: &mxl_sys::Rational) -> Result<u64> {
+    pub fn index_to_timestamp(&self, index: u64, rate: &mxl_sys::mxlRational) -> Result<u64> {
         let timestamp = unsafe { self.context.api.mxl_index_to_timestamp(rate, index) };
         if timestamp == u64::MAX {
             Err(Error::Other(format!(

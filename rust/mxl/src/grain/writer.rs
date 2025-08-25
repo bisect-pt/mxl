@@ -31,7 +31,7 @@ impl GrainWriter {
     /// multiple grains. If the TODO ever gets removed, it may be worth considering pattern where
     /// opening grain would consume the writer and then return it back on commit or cancel.
     pub fn open_grain<'a>(&'a self, index: u64) -> Result<GrainWriteAccess<'a>> {
-        let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
+        let mut grain_info: mxl_sys::mxlGrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         unsafe {
             Error::from_status(self.context.api.mxl_flow_writer_open_grain(

@@ -30,7 +30,7 @@ pub struct MxlApi {
         instance: mxl_sys::mxlInstance,
         flowDef: *const std::os::raw::c_char,
         options: *const std::os::raw::c_char,
-        info: *mut mxl_sys::FlowInfo,
+        info: *mut mxl_sys::mxlFlowInfo,
     ) -> mxl_sys::mxlStatus,
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlDestroyFlow"]
@@ -67,7 +67,7 @@ pub struct MxlApi {
     #[dlopen2_name = "mxlFlowReaderGetInfo"]
     mxl_flow_reader_get_info: unsafe extern "C" fn(
         reader: mxl_sys::mxlFlowReader,
-        info: *mut mxl_sys::FlowInfo,
+        info: *mut mxl_sys::mxlFlowInfo,
     ) -> mxl_sys::mxlStatus,
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlFlowReaderGetGrain"]
@@ -75,14 +75,14 @@ pub struct MxlApi {
         reader: mxl_sys::mxlFlowReader,
         index: u64,
         timeoutNs: u64,
-        grain: *mut mxl_sys::GrainInfo,
+        grain: *mut mxl_sys::mxlGrainInfo,
         payload: *mut *mut u8,
     ) -> mxl_sys::mxlStatus,
     #[dlopen2_name = "mxlFlowReaderGetGrainNonBlocking"]
     mxl_flow_reader_get_grain_non_blocking: unsafe extern "C" fn(
         reader: mxl_sys::mxlFlowReader,
         index: u64,
-        grain: *mut mxl_sys::GrainInfo,
+        grain: *mut mxl_sys::mxlGrainInfo,
         payload: *mut *mut u8,
     ) -> mxl_sys::mxlStatus,
     #[allow(non_snake_case)]
@@ -90,7 +90,7 @@ pub struct MxlApi {
     mxl_flow_writer_open_grain: unsafe extern "C" fn(
         writer: mxl_sys::mxlFlowWriter,
         index: u64,
-        grainInfo: *mut mxl_sys::GrainInfo,
+        grainInfo: *mut mxl_sys::mxlGrainInfo,
         payload: *mut *mut u8,
     ) -> mxl_sys::mxlStatus,
     #[dlopen2_name = "mxlFlowWriterCancelGrain"]
@@ -99,7 +99,7 @@ pub struct MxlApi {
     #[dlopen2_name = "mxlFlowWriterCommitGrain"]
     mxl_flow_writer_commit_grain: unsafe extern "C" fn(
         writer: mxl_sys::mxlFlowWriter,
-        grain: *const mxl_sys::GrainInfo,
+        grain: *const mxl_sys::mxlGrainInfo,
     ) -> mxl_sys::mxlStatus,
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlFlowReaderGetSamples"]
@@ -107,7 +107,7 @@ pub struct MxlApi {
         reader: mxl_sys::mxlFlowReader,
         index: u64,
         count: usize,
-        payloadBuffersSlices: *mut mxl_sys::WrappedMultiBufferSlice,
+        payloadBuffersSlices: *mut mxl_sys::mxlWrappedMultiBufferSlice,
     ) -> mxl_sys::mxlStatus,
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlFlowWriterOpenSamples"]
@@ -115,7 +115,7 @@ pub struct MxlApi {
         writer: mxl_sys::mxlFlowWriter,
         index: u64,
         count: usize,
-        payloadBuffersSlices: *mut mxl_sys::MutableWrappedMultiBufferSlice,
+        payloadBuffersSlices: *mut mxl_sys::mxlMutableWrappedMultiBufferSlice,
     ) -> mxl_sys::mxlStatus,
     #[dlopen2_name = "mxlFlowWriterCancelSamples"]
     mxl_flow_writer_cancel_samples:
@@ -125,19 +125,19 @@ pub struct MxlApi {
         unsafe extern "C" fn(writer: mxl_sys::mxlFlowWriter) -> mxl_sys::mxlStatus,
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlGetCurrentIndex"]
-    mxl_get_current_index: unsafe extern "C" fn(editRate: *const mxl_sys::Rational) -> u64,
+    mxl_get_current_index: unsafe extern "C" fn(editRate: *const mxl_sys::mxlRational) -> u64,
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlGetNsUntilIndex"]
     mxl_get_ns_until_index:
-        unsafe extern "C" fn(index: u64, editRate: *const mxl_sys::Rational) -> u64,
+        unsafe extern "C" fn(index: u64, editRate: *const mxl_sys::mxlRational) -> u64,
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlTimestampToIndex"]
     mxl_timestamp_to_index:
-        unsafe extern "C" fn(editRate: *const mxl_sys::Rational, timestamp: u64) -> u64,
+        unsafe extern "C" fn(editRate: *const mxl_sys::mxlRational, timestamp: u64) -> u64,
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlIndexToTimestamp"]
     mxl_index_to_timestamp:
-        unsafe extern "C" fn(editRate: *const mxl_sys::Rational, index: u64) -> u64,
+        unsafe extern "C" fn(editRate: *const mxl_sys::mxlRational, index: u64) -> u64,
     #[dlopen2_name = "mxlSleepForNs"]
     mxl_sleep_for_ns: unsafe extern "C" fn(ns: u64),
     #[dlopen2_name = "mxlGetTime"]

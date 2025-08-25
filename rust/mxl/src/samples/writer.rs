@@ -25,7 +25,7 @@ impl SamplesWriter {
     }
 
     pub fn open_samples<'a>(&'a self, index: u64, count: usize) -> Result<SamplesWriteAccess<'a>> {
-        let mut buffer_slice: mxl_sys::MutableWrappedMultiBufferSlice =
+        let mut buffer_slice: mxl_sys::mxlMutableWrappedMultiBufferSlice =
             unsafe { std::mem::zeroed() };
         unsafe {
             Error::from_status(self.context.api.mxl_flow_writer_open_samples(

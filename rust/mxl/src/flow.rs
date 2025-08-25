@@ -36,11 +36,11 @@ pub(crate) fn is_discrete_data_format(format: u32) -> bool {
 }
 
 pub struct FlowInfo {
-    pub(crate) value: mxl_sys::FlowInfo,
+    pub(crate) value: mxl_sys::mxlFlowInfo,
 }
 
 impl FlowInfo {
-    pub fn discrete_flow_info(&self) -> Result<&mxl_sys::DiscreteFlowInfo> {
+    pub fn discrete_flow_info(&self) -> Result<&mxl_sys::mxlDiscreteFlowInfo> {
         if !is_discrete_data_format(self.value.common.format) {
             return Err(Error::Other(format!(
                 "Flow format is {}, video or data required.",
@@ -50,7 +50,7 @@ impl FlowInfo {
         Ok(unsafe { &self.value.__bindgen_anon_1.discrete })
     }
 
-    pub fn continuous_flow_info(&self) -> Result<&mxl_sys::ContinuousFlowInfo> {
+    pub fn continuous_flow_info(&self) -> Result<&mxl_sys::mxlContinuousFlowInfo> {
         if is_discrete_data_format(self.value.common.format) {
             return Err(Error::Other(format!(
                 "Flow format is {}, audio required.",
@@ -69,7 +69,7 @@ impl FlowInfo {
     }
 }
 
-pub struct CommonFlowInfo<'a>(&'a mxl_sys::CommonFlowInfo);
+pub struct CommonFlowInfo<'a>(&'a mxl_sys::mxlCommonFlowInfo);
 
 impl CommonFlowInfo<'_> {
     pub fn id(&self) -> Uuid {

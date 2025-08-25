@@ -6,12 +6,12 @@ use std::marker::PhantomData;
 use crate::Error;
 
 pub struct SamplesData<'a> {
-    buffer_slice: mxl_sys::WrappedMultiBufferSlice,
+    buffer_slice: mxl_sys::mxlWrappedMultiBufferSlice,
     phantom: PhantomData<&'a ()>,
 }
 
 impl<'a> SamplesData<'a> {
-    pub(crate) fn new(buffer_slice: mxl_sys::WrappedMultiBufferSlice) -> Self {
+    pub(crate) fn new(buffer_slice: mxl_sys::mxlWrappedMultiBufferSlice) -> Self {
         Self {
             buffer_slice,
             phantom: Default::default(),

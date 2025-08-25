@@ -22,7 +22,7 @@ pub(crate) fn get_flow_info(
     context: &Arc<InstanceContext>,
     reader: mxl_sys::mxlFlowReader,
 ) -> Result<FlowInfo> {
-    let mut flow_info: mxl_sys::FlowInfo = unsafe { std::mem::zeroed() };
+    let mut flow_info: mxl_sys::mxlFlowInfo = unsafe { std::mem::zeroed() };
     unsafe {
         Error::from_status(context.api.mxl_flow_reader_get_info(reader, &mut flow_info))?;
     }
