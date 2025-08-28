@@ -143,6 +143,44 @@ impl MxlInstance {
         Ok(())
     }
 
+    pub fn get_flow_def(&self, flow_id: &str) -> Result<String> {
+        let flow_id = CString::new(flow_id)?;
+        const INITIAL_BUFFER_SIZE: usize = 4096;
+        let mut buffer: Vec<u8> = vec![0; INITIAL_BUFFER_SIZE];
+        let mut buffer_size = INITIAL_BUFFER_SIZE;
+
+        let status = unsafe {
+            self.context.api.mxl_get_flow_def(
+                self.context.instance,
+                flow_id.as_ptr(),
+                buffer.as_mut_ptr() as *mut std::os::raw::c_char,
+                &mut buffer_size,
+            )
+        };
+
+        if status == mxl_sys::MXL_ERR_INVALID_ARG && buffer_size > INITIAL_BUFFER_SIZE {
+            buffer = vec![0; buffer_size];
+            unsafe {
+                Error::from_status(self.context.api.mxl_get_flow_def(
+                    self.context.instance,
+                    flow_id.as_ptr(),
+                    buffer.as_mut_ptr() as *mut std::os::raw::c_char,
+                    &mut buffer_size,
+                ))?;
+            }
+        } else {
+            Error::from_status(status)?;
+        }
+
+        if buffer_size > 0 && buffer[buffer_size - 1] == 0 {
+            buffer_size -= 1;
+        }
+        buffer.truncate(buffer_size);
+
+        String::from_utf8(buffer)
+            .map_err(|_| Error::Other("Invalid UTF-8 in flow definition".to_string()))
+    }
+
     pub fn get_current_index(&self, rational: &mxl_sys::mxlRational) -> u64 {
         unsafe { self.context.api.mxl_get_current_index(rational) }
     }

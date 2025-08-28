@@ -38,6 +38,16 @@ pub struct MxlApi {
         instance: mxl_sys::mxlInstance,
         flowId: *const std::os::raw::c_char,
     ) -> mxl_sys::mxlStatus,
+
+    #[allow(non_snake_case)]
+    #[dlopen2_name = "mxlGetFlowDef"]
+    mxl_get_flow_def: unsafe extern "C" fn(
+        instance: mxl_sys::mxlInstance,
+        flowId: *const ::std::os::raw::c_char,
+        buffer: *mut ::std::os::raw::c_char,
+        bufferSize: *mut usize,
+    ) -> mxl_sys::mxlStatus,
+
     #[allow(non_snake_case)]
     #[dlopen2_name = "mxlCreateFlowReader"]
     mxl_create_flow_reader: unsafe extern "C" fn(
