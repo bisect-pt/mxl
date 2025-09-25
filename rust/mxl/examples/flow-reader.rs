@@ -3,7 +3,7 @@ mod common;
 use std::time::Duration;
 
 use clap::Parser;
-use mxl::config::get_mxf_so_path;
+use mxl::config::get_mxl_so_path;
 use tracing::{info, warn};
 
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -30,7 +30,7 @@ fn main() -> Result<(), mxl::Error> {
     common::setup_logging();
     let opts: Opts = Opts::parse();
 
-    let mxl_api = mxl::load_api(get_mxf_so_path())?;
+    let mxl_api = mxl::load_api(get_mxl_so_path())?;
     let mxl_instance = mxl::MxlInstance::new(mxl_api, &opts.mxl_domain, "")?;
     let reader = mxl_instance.create_flow_reader(&opts.flow_id)?;
     let flow_info = reader.get_info()?;

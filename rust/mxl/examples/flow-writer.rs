@@ -3,7 +3,7 @@ mod common;
 use clap::Parser;
 use tracing::info;
 
-use mxl::config::get_mxf_so_path;
+use mxl::config::get_mxl_so_path;
 
 #[derive(Debug, Parser)]
 #[command(version = clap::crate_version!(), author = clap::crate_authors!())]
@@ -30,7 +30,7 @@ fn main() -> Result<(), mxl::Error> {
     common::setup_logging();
     let opts: Opts = Opts::parse();
 
-    let mxl_api = mxl::load_api(get_mxf_so_path())?;
+    let mxl_api = mxl::load_api(get_mxl_so_path())?;
     let mxl_instance = mxl::MxlInstance::new(mxl_api, &opts.mxl_domain, "")?;
     let flow_def = mxl::tools::read_file(opts.flow_config_file.as_str()).map_err(|error| {
         mxl::Error::Other(format!(

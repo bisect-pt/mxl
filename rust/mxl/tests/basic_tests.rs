@@ -4,7 +4,7 @@
 /// change in the future. For now, feel free to just edit the path to your library.
 use std::time::Duration;
 
-use mxl::{MxlInstance, OwnedGrainData, OwnedSamplesData, config::get_mxf_so_path};
+use mxl::{MxlInstance, OwnedGrainData, OwnedSamplesData, config::get_mxl_so_path};
 use tracing::info;
 
 static LOG_ONCE: std::sync::Once = std::sync::Once::new();
@@ -32,7 +32,7 @@ fn setup_test(test: &str) -> mxl::MxlInstance {
             .init();
     });
 
-    let mxl_api = mxl::load_api(get_mxf_so_path()).unwrap();
+    let mxl_api = mxl::load_api(get_mxl_so_path()).unwrap();
     let domain = setup_empty_domain(test);
     mxl::MxlInstance::new(mxl_api, &domain, "").unwrap()
 }
