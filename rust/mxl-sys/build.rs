@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use std::path::PathBuf;
 
 #[cfg(debug_assertions)]
@@ -29,28 +28,14 @@ fn get_bindgen_specs() -> BindgenSpecs {
             .to_string(),
     ];
     if cfg!(not(feature = "mxl-not-built")) {
-        let build_dir = repo_root.join("build").join(BUILD_VARIANT);
-        let build_version_dir = build_dir
-            .join("lib")
-            .join("include")
-            .to_string_lossy()
-            .to_string();
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        let build_version_dir = out_dir.join("include").to_string_lossy().to_string();
 
         includes_dirs.push(build_version_dir);
 
-        let mxl_version_out_path = manifest_dir.join("mxl");
-        if !fs::exists(&mxl_version_out_path)
-            .expect("Error checking if out path for version header file exists")
-        {
-            fs::create_dir(&mxl_version_out_path)
-                .expect("Failed to create out path for version header file");
-        }
-        let mxl_version_header = mxl_version_out_path.join("version.h");
-        println!("cargo:rerun-if-changed={}", mxl_version_header.display());
-        // TODO: re-run on build_dir changing?
-        // TODO: re-run on any changes in lib
-
-        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        // Rebuild if any file in lib/ changes
+        let lib_root = repo_root.join("lib");
+        println!("cargo:rerun-if-changed={}", lib_root.display());
 
         let dst = cmake::Config::new(repo_root)
             .generator("Ninja")
@@ -63,13 +48,7 @@ fn get_bindgen_specs() -> BindgenSpecs {
             .define("BUILD_TOOLS", "OFF")
             .build();
 
-        let mxl_version_location = dst.join("include").join("mxl").join("version.h");
-        assert!(matches!(std::fs::exists(&mxl_version_location), Ok(true)));
-
-        fs::copy(&mxl_version_location, &mxl_version_header)
-            .expect("Could copy mxl version header");
-
-        println!("cargo:rustc-link-search={}", dst.join("lib64").display());
+        println!("cargo:rustc-link-search={}", dst.join("lib").display());
         println!("cargo:rustc-link-lib=mxl");
     }
 
