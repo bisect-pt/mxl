@@ -48,13 +48,19 @@ fn get_bindgen_specs() -> BindgenSpecs {
         let mxl_version_header = mxl_version_out_path.join("version.h");
         println!("cargo:rerun-if-changed={}", mxl_version_header.display());
         // TODO: re-run on build_dir changing?
+        // TODO: re-run on any changes in lib
+
+        let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
         let dst = cmake::Config::new(repo_root)
-            .out_dir(build_dir)
-            .generator("Unix Makefiles")
+            .generator("Ninja")
+            .configure_arg("--preset")
+            .configure_arg(BUILD_VARIANT)
+            .configure_arg("-B")
+            .configure_arg(out_dir.join("build"))
+            .define("BUILD_DOCS", "OFF")
             .define("BUILD_TESTS", "OFF")
             .define("BUILD_TOOLS", "OFF")
-            // .configure_arg(format!("--preset={BUILD_VARIANT}"))
             .build();
 
         let mxl_version_location = dst.join("include").join("mxl").join("version.h");
