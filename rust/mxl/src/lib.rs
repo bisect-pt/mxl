@@ -9,7 +9,6 @@ mod instance;
 mod samples;
 
 pub mod config;
-pub mod tools;
 
 pub use api::{MxlApi, load_api};
 pub use error::{Error, Result};

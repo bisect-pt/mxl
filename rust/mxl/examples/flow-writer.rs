@@ -35,7 +35,7 @@ fn main() -> Result<(), mxl::Error> {
 
     let mxl_api = mxl::load_api(get_mxl_so_path())?;
     let mxl_instance = mxl::MxlInstance::new(mxl_api, &opts.mxl_domain, "")?;
-    let flow_def = mxl::tools::read_file(opts.flow_config_file.as_str()).map_err(|error| {
+    let flow_def = std::fs::read_to_string(opts.flow_config_file.as_str()).map_err(|error| {
         mxl::Error::Other(format!(
             "Error while reading flow definition from \"{}\": {}",
             &opts.flow_config_file, error
