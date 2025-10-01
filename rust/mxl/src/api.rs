@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2025 2025 Contributors to the Media eXchange Layer project.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use dlopen2::wrapper::{Container, WrapperApi};
 
@@ -154,6 +154,10 @@ pub struct MxlApi {
     mxl_get_time: unsafe extern "C" fn() -> u64,
 }
 
-pub fn load_api(path_to_so_file: impl AsRef<Path>) -> Result<Container<MxlApi>> {
-    Ok(unsafe { Container::load(path_to_so_file.as_ref().as_os_str()) }?)
+pub type MxlApiHandle = Arc<Container<MxlApi>>;
+
+pub fn load_api(path_to_so_file: impl AsRef<Path>) -> Result<MxlApiHandle> {
+    Ok(Arc::new(unsafe {
+        Container::load(path_to_so_file.as_ref().as_os_str())
+    }?))
 }

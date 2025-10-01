@@ -3,16 +3,14 @@
 
 use std::{ffi::CString, sync::Arc};
 
-use dlopen2::wrapper::Container;
-
-use crate::{Error, FlowInfo, MxlApi, MxlFlowReader, MxlFlowWriter, Result};
+use crate::{Error, FlowInfo, MxlFlowReader, MxlFlowWriter, Result, api::MxlApiHandle};
 
 /// This struct stores the context that is shared by all objects.
 /// It is separated out from `MxlInstance` so that it can be cloned
 /// and other objects' lifetimes be decoupled from the MxlInstance
 /// itself.
 pub(crate) struct InstanceContext {
-    pub(crate) api: Container<MxlApi>,
+    pub(crate) api: MxlApiHandle,
     pub(crate) instance: mxl_sys::mxlInstance,
 }
 
@@ -70,7 +68,7 @@ pub struct MxlInstance {
 }
 
 impl MxlInstance {
-    pub fn new(api: Container<MxlApi>, domain: &str, options: &str) -> Result<Self> {
+    pub fn new(api: MxlApiHandle, domain: &str, options: &str) -> Result<Self> {
         let instance = unsafe {
             api.mxl_create_instance(
                 CString::new(domain)?.as_ptr(),
