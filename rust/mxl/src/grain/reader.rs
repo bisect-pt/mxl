@@ -70,7 +70,47 @@ impl GrainReader {
         let payload =
             unsafe { std::slice::from_raw_parts(payload_ptr, grain_info.grainSize as usize) };
 
-        Ok(GrainData { user_data, payload })
+        Ok(GrainData {
+            user_data,
+            payload,
+            total_size: grain_info.grainSize as usize,
+        })
+    }
+
+    /// Non-blocking version of `get_complete_grain`. If the grain is not available, returns an error.
+    /// If the grain is partial, it is returned as is and the payload length will be smaller than the total grain size.
+    pub fn get_grain_non_blocking<'a>(&'a self, index: u64) -> Result<GrainData<'a>> {
+        let mut grain_info: mxl_sys::mxlGrainInfo = unsafe { std::mem::zeroed() };
+        let mut payload_ptr: *mut u8 = std::ptr::null_mut();
+        unsafe {
+            Error::from_status(self.context.api.mxl_flow_reader_get_grain_non_blocking(
+                self.reader,
+                index,
+                &mut grain_info,
+                &mut payload_ptr,
+            ))?;
+        }
+
+        if payload_ptr.is_null() {
+            return Err(Error::Other(format!(
+                "Failed to get grain payload for index {index}.",
+            )));
+        }
+
+        // SAFETY
+        // We know that the lifetime is as long as the flow, so it is at least self's lifetime.
+        // It may happen that the buffer is overwritten by a subsequent write, but it is safe.
+        let user_data: &'a [u8] =
+            unsafe { std::mem::transmute::<&[u8], &'a [u8]>(&grain_info.userData) };
+
+        let payload =
+            unsafe { std::slice::from_raw_parts(payload_ptr, grain_info.grainSize as usize) };
+
+        Ok(GrainData {
+            user_data,
+            payload,
+            total_size: grain_info.grainSize as usize,
+        })
     }
 
     fn destroy_inner(&mut self) -> Result<()> {
