@@ -25,5 +25,4 @@ cargo binstall cargo-outdated --locked
 cargo binstall cargo-machete --locked
 
 cargo binstall cargo-deny --locked
-cargo binstall cargo-audit --locked
 cargo binstall cargo-nextest --locked
