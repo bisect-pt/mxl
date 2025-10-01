@@ -6,6 +6,7 @@ name = "mxl-sys"
 edition.workspace = true
 publish.workspace = true
 version.workspace = true
+license.workspace = true
 
 [dependencies]
 

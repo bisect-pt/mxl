@@ -6,6 +6,7 @@ name = "mxl"
 edition.workspace = true
 publish.workspace = true
 version.workspace = true
+license.workspace = true
 
 [dependencies]
 mxl-sys = { path = "../mxl-sys" }
