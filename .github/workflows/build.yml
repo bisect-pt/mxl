@@ -87,6 +87,9 @@ jobs:
           mkdir -p ${{ github.workspace }}/install
           chmod 777 ${{ github.workspace }}/install
           chmod g+s ${{ github.workspace }}/install
+          mkdir -p ${{ github.workspace }}/rust/target
+          chmod 777 ${{ github.workspace }}/rust/target
+          chmod g+s ${{ github.workspace }}/rust/target
 
       - name: Build Docker image
         if: steps.check-image.outputs.exists == 'false'
