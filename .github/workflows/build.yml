@@ -165,6 +165,53 @@ jobs:
               ctest --output-junit test-results.xml
             "
 
+      - name: Cache Cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-lint-
+
+      - name: Check the Rust bindings
+        env:
+          RUSTFLAGS: "-Dwarnings"
+        run: |
+          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+            -i mxl_build_container_with_source \
+            bash -c "
+              cd /workspace/mxl/rust && \
+              cargo fmt -- --check && \
+              cargo clippy --all-targets --all-features --locked -- -D warnings && \
+              cargo audit && \
+              cargo outdated && \
+              cargo machete && \
+              cargo deny check all
+            "
+
+      - name: Build Rust bindings
+        run: |
+          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+            -i mxl_build_container_with_source \
+            bash -c "
+              cd /workspace/mxl/rust && \
+              cargo build --all-targets --locked && \
+              cargo build --release --all-targets --locked
+            "
+
+      - name: Test the Rust bindings
+        run: |
+          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+            -i mxl_build_container_with_source \
+            bash -c "
+              cd /workspace/mxl/rust && \
+              cargo nextest run --release --locked
+            "
+
       - name: Publish Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
