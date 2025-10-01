@@ -42,7 +42,8 @@ fn setup_test(test: &str) -> mxl::MxlInstance {
 
 fn read_flow_def<P: AsRef<std::path::Path>>(path: P) -> String {
     let flow_config_file = mxl::config::get_mxl_repo_root().join(path);
-    let flow_def = std::fs::read_to_string(flow_config_file.as_path())
+
+    std::fs::read_to_string(flow_config_file.as_path())
         .map_err(|error| {
             mxl::Error::Other(format!(
                 "Error while reading flow definition from \"{}\": {}",
@@ -50,8 +51,7 @@ fn read_flow_def<P: AsRef<std::path::Path>>(path: P) -> String {
                 error
             ))
         })
-        .unwrap();
-    flow_def
+        .unwrap()
 }
 
 fn prepare_flow_info<P: AsRef<std::path::Path>>(

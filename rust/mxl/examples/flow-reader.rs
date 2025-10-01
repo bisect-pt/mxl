@@ -95,17 +95,15 @@ fn read_samples(
             );
         }
         batch_size as usize
-    } else {
-        if continous_flow_info.commitBatchSize == 0 {
-            let batch_size = (sample_rate.numerator / (100 * sample_rate.denominator)) as usize;
-            warn!(
-                "Writer batch size not available, using fallback value of {}.",
-                batch_size
-            );
+    } else if continous_flow_info.commitBatchSize == 0 {
+        let batch_size = (sample_rate.numerator / (100 * sample_rate.denominator)) as usize;
+        warn!(
+            "Writer batch size not available, using fallback value of {}.",
             batch_size
-        } else {
-            continous_flow_info.commitBatchSize as usize
-        }
+        );
+        batch_size
+    } else {
+        continous_flow_info.commitBatchSize as usize
     };
     let mut read_head = reader.get_info()?.continuous_flow_info()?.headIndex;
     let mut read_head_valid_at = mxl_instance.get_time();

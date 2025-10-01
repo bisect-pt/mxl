@@ -88,8 +88,8 @@ pub fn write_grains(
         let mut grain_writer_access = writer.open_grain(grain_index)?;
         let payload = grain_writer_access.payload_mut();
         let payload_len = payload.len();
-        for i in 0..payload_len {
-            payload[i] = ((i as u64 + grain_index) % 256) as u8;
+        for (i, byte) in payload.iter_mut().enumerate() {
+            *byte = ((i as u64 + grain_index) % 256) as u8;
         }
         grain_writer_access.commit(payload_len as u32)?;
 
@@ -130,10 +130,10 @@ pub fn write_samples(
 
     let mut remaining_samples = sample_count;
     loop {
-        if let Some(count) = remaining_samples {
-            if count == 0 {
-                break;
-            }
+        if let Some(count) = remaining_samples
+            && count == 0
+        {
+            break;
         }
         let samples_to_write = u64::min(batch_size, remaining_samples.unwrap_or(u64::MAX));
         if let Some(count) = remaining_samples {
@@ -144,12 +144,12 @@ pub fn write_samples(
         let mut writing_sample_index = samples_index - batch_size + 1;
         for channel in 0..samples_write_access.channels() {
             let (data_1, data_2) = samples_write_access.channel_data_mut(channel)?;
-            for i in 0..data_1.len() {
-                data_1[i] = (writing_sample_index % 256) as u8;
+            for sample in data_1.iter_mut() {
+                *sample = (writing_sample_index % 256) as u8;
                 writing_sample_index += 1;
             }
-            for i in 0..data_2.len() {
-                data_2[i] = (writing_sample_index % 256) as u8;
+            for sample in data_2.iter_mut() {
+                *sample = (writing_sample_index % 256) as u8;
                 writing_sample_index += 1;
             }
         }
