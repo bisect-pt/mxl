@@ -12,7 +12,7 @@ pub mod config;
 
 pub use api::{MxlApi, load_api};
 pub use error::{Error, Result};
-pub use flow::{reader::MxlFlowReader, writer::MxlFlowWriter, *};
+pub use flow::{reader::FlowReader, writer::MxlFlowWriter, *};
 pub use grain::{
     data::*, reader::GrainReader, write_access::GrainWriteAccess, writer::GrainWriter,
 };

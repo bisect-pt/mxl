@@ -3,7 +3,7 @@
 
 use std::{ffi::CString, sync::Arc};
 
-use crate::{Error, FlowInfo, MxlFlowReader, MxlFlowWriter, Result, api::MxlApiHandle};
+use crate::{Error, FlowInfo, FlowReader, MxlFlowWriter, Result, api::MxlApiHandle};
 
 /// This struct stores the context that is shared by all objects.
 /// It is separated out from `MxlInstance` so that it can be cloned
@@ -44,7 +44,7 @@ impl Drop for InstanceContext {
 pub(crate) fn create_flow_reader(
     context: &Arc<InstanceContext>,
     flow_id: &str,
-) -> Result<MxlFlowReader> {
+) -> Result<FlowReader> {
     let flow_id = CString::new(flow_id)?;
     let options = CString::new("")?;
     let mut reader: mxl_sys::mxlFlowReader = std::ptr::null_mut();
@@ -59,7 +59,7 @@ pub(crate) fn create_flow_reader(
     if reader.is_null() {
         return Err(Error::Other("Failed to create flow reader.".to_string()));
     }
-    Ok(MxlFlowReader::new(context.clone(), reader))
+    Ok(FlowReader::new(context.clone(), reader))
 }
 
 #[derive(Clone)]
@@ -83,7 +83,7 @@ impl MxlInstance {
         }
     }
 
-    pub fn create_flow_reader(&self, flow_id: &str) -> Result<MxlFlowReader> {
+    pub fn create_flow_reader(&self, flow_id: &str) -> Result<FlowReader> {
         create_flow_reader(&self.context, flow_id)
     }
 

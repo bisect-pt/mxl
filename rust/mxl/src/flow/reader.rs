@@ -9,14 +9,14 @@ use crate::{
     instance::InstanceContext,
 };
 
-pub struct MxlFlowReader {
+pub struct FlowReader {
     context: Arc<InstanceContext>,
     reader: mxl_sys::mxlFlowReader,
 }
 
 /// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
 /// there is no reason to not implement `Send`.
-unsafe impl Send for MxlFlowReader {}
+unsafe impl Send for FlowReader {}
 
 pub(crate) fn get_flow_info(
     context: &Arc<InstanceContext>,
@@ -29,7 +29,7 @@ pub(crate) fn get_flow_info(
     Ok(FlowInfo { value: flow_info })
 }
 
-impl MxlFlowReader {
+impl FlowReader {
     pub(crate) fn new(context: Arc<InstanceContext>, reader: mxl_sys::mxlFlowReader) -> Self {
         Self { context, reader }
     }
@@ -65,7 +65,7 @@ impl MxlFlowReader {
     }
 }
 
-impl Drop for MxlFlowReader {
+impl Drop for FlowReader {
     fn drop(&mut self) {
         if !self.reader.is_null()
             && let Err(err) = Error::from_status(unsafe {
