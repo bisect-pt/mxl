@@ -34,7 +34,7 @@ impl GrainWriter {
         let mut grain_info: mxl_sys::mxlGrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         unsafe {
-            Error::from_status(self.context.api.mxl_flow_writer_open_grain(
+            Error::from_status(self.context.api.flow_writer_open_grain(
                 self.writer,
                 index,
                 &mut grain_info,
@@ -67,7 +67,7 @@ impl GrainWriter {
         Error::from_status(unsafe {
             self.context
                 .api
-                .mxl_release_flow_writer(self.context.instance, writer)
+                .release_flow_writer(self.context.instance, writer)
         })
     }
 }

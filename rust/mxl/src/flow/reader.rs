@@ -24,7 +24,7 @@ pub(crate) fn get_flow_info(
 ) -> Result<FlowInfo> {
     let mut flow_info: mxl_sys::mxlFlowInfo = unsafe { std::mem::zeroed() };
     unsafe {
-        Error::from_status(context.api.mxl_flow_reader_get_info(reader, &mut flow_info))?;
+        Error::from_status(context.api.flow_reader_get_info(reader, &mut flow_info))?;
     }
     Ok(FlowInfo { value: flow_info })
 }
@@ -71,7 +71,7 @@ impl Drop for FlowReader {
             && let Err(err) = Error::from_status(unsafe {
                 self.context
                     .api
-                    .mxl_release_flow_reader(self.context.instance, self.reader)
+                    .release_flow_reader(self.context.instance, self.reader)
             })
         {
             tracing::error!("Failed to release MXL flow reader: {:?}", err);

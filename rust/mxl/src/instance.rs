@@ -27,7 +27,7 @@ impl InstanceContext {
         unsafe {
             let mut instance = std::ptr::null_mut();
             std::mem::swap(&mut self.instance, &mut instance);
-            self.api.mxl_destroy_instance(self.instance)
+            self.api.destroy_instance(self.instance)
         };
         Ok(())
     }
@@ -36,7 +36,7 @@ impl InstanceContext {
 impl Drop for InstanceContext {
     fn drop(&mut self) {
         if !self.instance.is_null() {
-            unsafe { self.api.mxl_destroy_instance(self.instance) };
+            unsafe { self.api.destroy_instance(self.instance) };
         }
     }
 }
@@ -49,7 +49,7 @@ pub(crate) fn create_flow_reader(
     let options = CString::new("")?;
     let mut reader: mxl_sys::mxlFlowReader = std::ptr::null_mut();
     unsafe {
-        Error::from_status(context.api.mxl_create_flow_reader(
+        Error::from_status(context.api.create_flow_reader(
             context.instance,
             flow_id.as_ptr(),
             options.as_ptr(),
@@ -70,7 +70,7 @@ pub struct MxlInstance {
 impl MxlInstance {
     pub fn new(api: MxlApiHandle, domain: &str, options: &str) -> Result<Self> {
         let instance = unsafe {
-            api.mxl_create_instance(
+            api.create_instance(
                 CString::new(domain)?.as_ptr(),
                 CString::new(options)?.as_ptr(),
             )
@@ -94,7 +94,7 @@ impl MxlInstance {
         let options = CString::new("")?;
         let mut writer: mxl_sys::mxlFlowWriter = std::ptr::null_mut();
         unsafe {
-            Error::from_status(self.context.api.mxl_create_flow_writer(
+            Error::from_status(self.context.api.create_flow_writer(
                 self.context.instance,
                 flow_id.as_ptr(),
                 options.as_ptr(),
@@ -116,7 +116,7 @@ impl MxlInstance {
         let mut info = std::mem::MaybeUninit::<mxl_sys::mxlFlowInfo>::uninit();
 
         unsafe {
-            Error::from_status(self.context.api.mxl_create_flow(
+            Error::from_status(self.context.api.create_flow(
                 self.context.instance,
                 flow_def.as_ptr(),
                 options.as_ptr(),
@@ -135,7 +135,7 @@ impl MxlInstance {
             Error::from_status(
                 self.context
                     .api
-                    .mxl_destroy_flow(self.context.instance, flow_id.as_ptr()),
+                    .destroy_flow(self.context.instance, flow_id.as_ptr()),
             )?;
         }
         Ok(())
@@ -148,7 +148,7 @@ impl MxlInstance {
         let mut buffer_size = INITIAL_BUFFER_SIZE;
 
         let status = unsafe {
-            self.context.api.mxl_get_flow_def(
+            self.context.api.get_flow_def(
                 self.context.instance,
                 flow_id.as_ptr(),
                 buffer.as_mut_ptr() as *mut std::os::raw::c_char,
@@ -159,7 +159,7 @@ impl MxlInstance {
         if status == mxl_sys::MXL_ERR_INVALID_ARG && buffer_size > INITIAL_BUFFER_SIZE {
             buffer = vec![0; buffer_size];
             unsafe {
-                Error::from_status(self.context.api.mxl_get_flow_def(
+                Error::from_status(self.context.api.get_flow_def(
                     self.context.instance,
                     flow_id.as_ptr(),
                     buffer.as_mut_ptr() as *mut std::os::raw::c_char,
@@ -180,7 +180,7 @@ impl MxlInstance {
     }
 
     pub fn get_current_index(&self, rational: &mxl_sys::mxlRational) -> u64 {
-        unsafe { self.context.api.mxl_get_current_index(rational) }
+        unsafe { self.context.api.get_current_index(rational) }
     }
 
     pub fn get_duration_until_index(
@@ -188,7 +188,7 @@ impl MxlInstance {
         index: u64,
         rate: &mxl_sys::mxlRational,
     ) -> Result<std::time::Duration> {
-        let duration_ns = unsafe { self.context.api.mxl_get_ns_until_index(index, rate) };
+        let duration_ns = unsafe { self.context.api.get_ns_until_index(index, rate) };
         if duration_ns == u64::MAX {
             Err(Error::Other(format!(
                 "Failed to get duration until index, invalid rate {}/{}.",
@@ -201,7 +201,7 @@ impl MxlInstance {
 
     /// TODO: Make timestamp a strong type.
     pub fn timestamp_to_index(&self, timestamp: u64, rate: &mxl_sys::mxlRational) -> Result<u64> {
-        let index = unsafe { self.context.api.mxl_timestamp_to_index(rate, timestamp) };
+        let index = unsafe { self.context.api.timestamp_to_index(rate, timestamp) };
         if index == u64::MAX {
             Err(Error::Other(format!(
                 "Failed to convert timestamp to index, invalid rate {}/{}.",
@@ -213,7 +213,7 @@ impl MxlInstance {
     }
 
     pub fn index_to_timestamp(&self, index: u64, rate: &mxl_sys::mxlRational) -> Result<u64> {
-        let timestamp = unsafe { self.context.api.mxl_index_to_timestamp(rate, index) };
+        let timestamp = unsafe { self.context.api.index_to_timestamp(rate, index) };
         if timestamp == u64::MAX {
             Err(Error::Other(format!(
                 "Failed to convert index to timestamp, invalid rate {}/{}.",
@@ -225,15 +225,11 @@ impl MxlInstance {
     }
 
     pub fn sleep_for(&self, duration: std::time::Duration) {
-        unsafe {
-            self.context
-                .api
-                .mxl_sleep_for_ns(duration.as_nanos() as u64)
-        }
+        unsafe { self.context.api.sleep_for_ns(duration.as_nanos() as u64) }
     }
 
     pub fn get_time(&self) -> u64 {
-        unsafe { self.context.api.mxl_get_time() }
+        unsafe { self.context.api.get_time() }
     }
 
     /// This function forces the destruction of the MXL instance.

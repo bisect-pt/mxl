@@ -34,7 +34,7 @@ impl SamplesReader {
     pub fn get_samples(&self, index: u64, count: usize) -> Result<SamplesData<'_>> {
         let mut buffer_slice: mxl_sys::mxlWrappedMultiBufferSlice = unsafe { std::mem::zeroed() };
         unsafe {
-            Error::from_status(self.context.api.mxl_flow_reader_get_samples(
+            Error::from_status(self.context.api.flow_reader_get_samples(
                 self.reader,
                 index,
                 count,
@@ -55,7 +55,7 @@ impl SamplesReader {
         Error::from_status(unsafe {
             self.context
                 .api
-                .mxl_release_flow_reader(self.context.instance, reader)
+                .release_flow_reader(self.context.instance, reader)
         })
     }
 }

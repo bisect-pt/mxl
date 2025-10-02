@@ -83,7 +83,7 @@ impl Drop for FlowWriter {
             && let Err(err) = Error::from_status(unsafe {
                 self.context
                     .api
-                    .mxl_release_flow_writer(self.context.instance, self.writer)
+                    .release_flow_writer(self.context.instance, self.writer)
             })
         {
             tracing::error!("Failed to release MXL flow writer: {:?}", err);

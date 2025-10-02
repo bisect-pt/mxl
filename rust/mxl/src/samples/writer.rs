@@ -28,7 +28,7 @@ impl SamplesWriter {
         let mut buffer_slice: mxl_sys::mxlMutableWrappedMultiBufferSlice =
             unsafe { std::mem::zeroed() };
         unsafe {
-            Error::from_status(self.context.api.mxl_flow_writer_open_samples(
+            Error::from_status(self.context.api.flow_writer_open_samples(
                 self.writer,
                 index,
                 count,
@@ -53,7 +53,7 @@ impl SamplesWriter {
         Error::from_status(unsafe {
             self.context
                 .api
-                .mxl_release_flow_writer(self.context.instance, writer)
+                .release_flow_writer(self.context.instance, writer)
         })
     }
 }

@@ -41,7 +41,7 @@ impl GrainReader {
         let timeout_ns = timeout.as_nanos() as u64;
         loop {
             unsafe {
-                Error::from_status(self.context.api.mxl_flow_reader_get_grain(
+                Error::from_status(self.context.api.flow_reader_get_grain(
                     self.reader,
                     index,
                     timeout_ns,
@@ -83,7 +83,7 @@ impl GrainReader {
         let mut grain_info: mxl_sys::mxlGrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         unsafe {
-            Error::from_status(self.context.api.mxl_flow_reader_get_grain_non_blocking(
+            Error::from_status(self.context.api.flow_reader_get_grain_non_blocking(
                 self.reader,
                 index,
                 &mut grain_info,
@@ -124,7 +124,7 @@ impl GrainReader {
         Error::from_status(unsafe {
             self.context
                 .api
-                .mxl_release_flow_reader(self.context.instance, reader)
+                .release_flow_reader(self.context.instance, reader)
         })
     }
 }

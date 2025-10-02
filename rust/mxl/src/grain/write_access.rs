@@ -70,7 +70,7 @@ impl<'a> GrainWriteAccess<'a> {
             Error::from_status(
                 self.context
                     .api
-                    .mxl_flow_writer_commit_grain(self.writer, &self.grain_info),
+                    .flow_writer_commit_grain(self.writer, &self.grain_info),
             )
         }
     }
@@ -82,7 +82,7 @@ impl<'a> GrainWriteAccess<'a> {
     pub fn cancel(mut self) -> Result<()> {
         self.committed_or_canceled = true;
 
-        unsafe { Error::from_status(self.context.api.mxl_flow_writer_cancel_grain(self.writer)) }
+        unsafe { Error::from_status(self.context.api.flow_writer_cancel_grain(self.writer)) }
     }
 }
 
@@ -90,7 +90,7 @@ impl<'a> Drop for GrainWriteAccess<'a> {
     fn drop(&mut self) {
         if !self.committed_or_canceled
             && let Err(error) = unsafe {
-                Error::from_status(self.context.api.mxl_flow_writer_cancel_grain(self.writer))
+                Error::from_status(self.context.api.flow_writer_cancel_grain(self.writer))
             }
         {
             error!("Failed to cancel grain write on drop: {:?}", error);
