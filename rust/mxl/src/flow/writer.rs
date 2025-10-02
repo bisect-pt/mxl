@@ -11,7 +11,7 @@ use crate::{
 
 /// Generic MXL Flow Writer, which can be further used to build either the "discrete" (grain-based
 /// data like video frames or meta) or "continuous" (audio samples) flow writers in MXL terminology.
-pub struct MxlFlowWriter {
+pub struct FlowWriter {
     context: Arc<InstanceContext>,
     writer: mxl_sys::mxlFlowWriter,
     id: uuid::Uuid,
@@ -19,9 +19,9 @@ pub struct MxlFlowWriter {
 
 /// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
 /// there is no reason to not implement `Send`.
-unsafe impl Send for MxlFlowWriter {}
+unsafe impl Send for FlowWriter {}
 
-impl MxlFlowWriter {
+impl FlowWriter {
     pub(crate) fn new(
         context: Arc<InstanceContext>,
         writer: mxl_sys::mxlFlowWriter,
@@ -77,7 +77,7 @@ impl MxlFlowWriter {
     }
 }
 
-impl Drop for MxlFlowWriter {
+impl Drop for FlowWriter {
     fn drop(&mut self) {
         if !self.writer.is_null()
             && let Err(err) = Error::from_status(unsafe {

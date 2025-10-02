@@ -3,7 +3,7 @@
 
 use std::{ffi::CString, sync::Arc};
 
-use crate::{Error, FlowInfo, FlowReader, MxlFlowWriter, Result, api::MxlApiHandle};
+use crate::{Error, FlowInfo, FlowReader, FlowWriter, Result, api::MxlApiHandle};
 
 /// This struct stores the context that is shared by all objects.
 /// It is separated out from `MxlInstance` so that it can be cloned
@@ -87,7 +87,7 @@ impl MxlInstance {
         create_flow_reader(&self.context, flow_id)
     }
 
-    pub fn create_flow_writer(&self, flow_id: &str) -> Result<MxlFlowWriter> {
+    pub fn create_flow_writer(&self, flow_id: &str) -> Result<FlowWriter> {
         let uuid = uuid::Uuid::parse_str(flow_id)
             .map_err(|_| Error::Other("Invalid flow ID format.".to_string()))?;
         let flow_id = CString::new(flow_id)?;
@@ -104,7 +104,7 @@ impl MxlInstance {
         if writer.is_null() {
             return Err(Error::Other("Failed to create flow writer.".to_string()));
         }
-        Ok(MxlFlowWriter::new(self.context.clone(), writer, uuid))
+        Ok(FlowWriter::new(self.context.clone(), writer, uuid))
     }
 
     /// For now, we provide direct access to the MXL API for creating and
