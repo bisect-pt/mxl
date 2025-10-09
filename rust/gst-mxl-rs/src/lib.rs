@@ -26,11 +26,11 @@ fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
 // license of the plugin, source package name, binary package name, origin where it comes from
 // and the date/time of release.
 gst::plugin_define!(
-    gstsrc,
+    mxlsrc,
     env!("CARGO_PKG_DESCRIPTION"),
     plugin_init,
     concat!(env!("CARGO_PKG_VERSION"), "-", env!("COMMIT_ID")),
-    "MIT/X11",
+    "Apache-2.0",
     env!("CARGO_PKG_NAME"),
     env!("CARGO_PKG_NAME"),
     env!("CARGO_PKG_REPOSITORY"),

@@ -1,8 +1,10 @@
 [package]
-name = "gst-plugin-src"
+name = "gst-mxl-src"
 version = "0.15.0-alpha.1"
 license = "Apache-2.0"
 edition = "2021"
+repository = "https://github.com/bisect-pt/mxl"
+description = "MXL source plugin"
 rust-version = "1.83"
 
 [dependencies]
@@ -14,9 +16,9 @@ byte-slice-cast = "1.0"
 num-traits = "0.2"
 
 [lib]
-name = "gstsrc"
+name = "gstmxlsrc"
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [build-dependencies]
-gst-plugin-version-helper = { path = "./version-helper" }
+gst-plugin-version-helper = { path = "../version-helper" }
