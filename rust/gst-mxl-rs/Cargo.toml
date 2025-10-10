@@ -14,6 +14,7 @@ gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/g
 gst-audio = { package = "gstreamer-audio", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", branch = "main" }
 byte-slice-cast = "1.0"
 num-traits = "0.2"
+mxl = { path = "../mxl" }
 
 [lib]
 name = "gstmxlsrc"
