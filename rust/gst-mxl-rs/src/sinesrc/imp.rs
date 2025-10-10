@@ -805,6 +805,29 @@ mod tests {
         assert_eq!(domain, "mydomain");
     }
 
+    #[ignore]
+    #[test]
+    fn test_start_runs() {
+        gst::init().unwrap();
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, SineSrc::type_()).unwrap();
+
+        let src = gst::ElementFactory::make("mxlsrc")
+            .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .unwrap();
+
+        let sink = gst::ElementFactory::make("fakesink").build().unwrap();
+
+        let pipeline = gst::Pipeline::new();
+        pipeline.add_many(&[&src, &sink]).unwrap();
+        src.link(&sink).unwrap();
+
+        pipeline.set_state(gst::State::Playing).unwrap();
+
+        pipeline.set_state(gst::State::Null).unwrap();
+    }
+
     #[test]
     #[ignore]
     fn test_valid_reader() {
@@ -813,7 +836,7 @@ mod tests {
 
         let element = gst::ElementFactory::make("mxlsrc")
             .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
-            .property("domain", "/Volumes/mxl/domain_1")
+            .property("domain", "/mnt/mxl/domain_1")
             .build()
             .unwrap();
 
