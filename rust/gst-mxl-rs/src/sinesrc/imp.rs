@@ -16,6 +16,8 @@ use gst_base::subclass::base_src::CreateSuccess;
 use gst_base::subclass::prelude::*;
 
 use byte_slice_cast::*;
+use mxl::config::get_mxl_so_path;
+use mxl::MxlFlowReader;
 
 use std::ops::Rem;
 use std::sync::Mutex;
@@ -74,6 +76,7 @@ struct State {
     sample_offset: u64,
     sample_stop: Option<u64>,
     accumulator: f64,
+    reader: Option<MxlFlowReader>,
 }
 
 impl Default for State {
@@ -83,6 +86,7 @@ impl Default for State {
             sample_offset: 0,
             sample_stop: None,
             accumulator: 0.0,
+            reader: None,
         }
     }
 }
@@ -203,48 +207,64 @@ impl ObjectImpl for SineSrc {
     // Called whenever a value of a property is changed. It can be called
     // at any time from any thread.
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
-        match pspec.name() {
-            "flow-id" => {
-                let mut settings = self.settings.lock().unwrap();
-                let flow_id = value.get().expect("type checked upstream");
-                gst::info!(
-                    CAT,
-                    imp = self,
-                    "Changing flow-id from {} to {}",
-                    settings.flow_id,
-                    flow_id
-                );
-                settings.flow_id = flow_id;
+        if let Ok(mut settings) = self.settings.lock() {
+            match pspec.name() {
+                "flow-id" => {
+                    if let Ok(flow_id) = value.get::<String>() {
+                        gst::info!(
+                            CAT,
+                            imp = self,
+                            "Changing flow-id from {} to {}",
+                            settings.flow_id,
+                            flow_id
+                        );
+                        settings.flow_id = flow_id;
+                    } else {
+                        gst::error!(CAT, imp = self, "Invalid type for flow-id property");
+                    }
+                }
+                "domain" => {
+                    if let Ok(domain) = value.get::<String>() {
+                        gst::info!(
+                            CAT,
+                            imp = self,
+                            "Changing domain from {} to {}",
+                            settings.domain,
+                            domain
+                        );
+                        settings.domain = domain;
+                    } else {
+                        gst::error!(CAT, imp = self, "Invalid type for domain property");
+                    }
+                }
+                other => {
+                    gst::error!(CAT, imp = self, "Unknown property '{}'", other);
+                }
             }
-            "domain" => {
-                let mut settings = self.settings.lock().unwrap();
-                let domain = value.get().expect("type checked upstream");
-                gst::info!(
-                    CAT,
-                    imp = self,
-                    "Changing domain from {} to {}",
-                    settings.domain,
-                    domain
-                );
-                settings.domain = domain;
-            }
-            _ => unimplemented!(),
+        } else {
+            gst::error!(
+                CAT,
+                imp = self,
+                "Settings mutex poisoned — property change ignored"
+            );
         }
     }
 
     // Called whenever a value of a property is read. It can be called
     // at any time from any thread.
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
-        match pspec.name() {
-            "flow-id" => {
-                let settings = self.settings.lock().unwrap();
-                settings.flow_id.to_value()
+        if let Ok(settings) = self.settings.lock() {
+            match pspec.name() {
+                "flow-id" => settings.flow_id.to_value(),
+                "domain" => settings.domain.to_value(),
+                _ => {
+                    gst::error!(CAT, imp = self, "Unknown property {}", pspec.name());
+                    glib::Value::from(&"")
+                }
             }
-            "domain" => {
-                let settings = self.settings.lock().unwrap();
-                settings.domain.to_value()
-            }
-            _ => unimplemented!(),
+        } else {
+            gst::error!(CAT, imp = self, "Settings mutex poisoned");
+            glib::Value::from(&"")
         }
     }
 }
@@ -363,6 +383,7 @@ impl BaseSrcImpl for SineSrc {
             sample_offset,
             sample_stop,
             accumulator,
+            reader: None,
         };
 
         drop(state);
@@ -377,9 +398,40 @@ impl BaseSrcImpl for SineSrc {
     // Called when starting, so we can initialize all stream-related state to its defaults
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         // Reset state
-        *self.state.lock().unwrap() = Default::default();
+        let mut state = self.state.lock().map_err(|e| {
+            gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
+        })?;
+        *state = Default::default();
         self.unlock_stop()?;
+        let settings = self.settings.lock().map_err(|e| {
+            gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to get settings mutex: {}", e]
+            )
+        })?;
 
+        let mxl_api = mxl::load_api(get_mxl_so_path()).map_err(|e| {
+            gst::error_msg!(gst::CoreError::Failed, ["Failed to load MXL API: {}", e])
+        })?;
+
+        let mxl_instance =
+            mxl::MxlInstance::new(mxl_api, settings.domain.as_str(), "").map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to load MXL instance: {}", e]
+                )
+            })?;
+
+        let reader = mxl_instance
+            .create_flow_reader(settings.flow_id.as_str())
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to create MXL reader: {}", e]
+                )
+            })?;
+
+        state.reader = Some(reader);
         gst::info!(CAT, imp = self, "Started");
 
         Ok(())
@@ -503,6 +555,7 @@ impl BaseSrcImpl for SineSrc {
                 sample_offset,
                 sample_stop,
                 accumulator,
+                reader: None,
             };
 
             true
@@ -539,6 +592,7 @@ impl BaseSrcImpl for SineSrc {
                 sample_offset,
                 sample_stop,
                 accumulator,
+                reader: None,
             };
 
             true
@@ -726,5 +780,67 @@ impl PushSrcImpl for SineSrc {
         gst::debug!(CAT, imp = self, "Produced buffer {:?}", buffer);
 
         Ok(CreateSuccess::NewBuffer(buffer))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_properties() {
+        gst::init().unwrap();
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, SineSrc::type_()).unwrap();
+
+        let element = gst::ElementFactory::make("mxlsrc")
+            .property("flow-id", "test_flow")
+            .property("domain", "mydomain")
+            .build()
+            .unwrap();
+
+        let flow_id: String = element.property("flow-id");
+        let domain: String = element.property("domain");
+
+        assert_eq!(flow_id, "test_flow");
+        assert_eq!(domain, "mydomain");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_valid_reader() {
+        gst::init().unwrap();
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, SineSrc::type_()).unwrap();
+
+        let element = gst::ElementFactory::make("mxlsrc")
+            .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/Volumes/mxl/domain_1")
+            .build()
+            .unwrap();
+
+        let flow_id: String = element.property("flow-id");
+        let domain: String = element.property("domain");
+        let mxl_api = mxl::load_api(get_mxl_so_path())
+            .map_err(|e| gst::error_msg!(gst::CoreError::Failed, ["Failed to load MXL API: {}", e]))
+            .unwrap();
+
+        let mxl_instance = mxl::MxlInstance::new(mxl_api, domain.as_str(), "")
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to load MXL instance: {}", e]
+                )
+            })
+            .unwrap();
+
+        let reader = mxl_instance
+            .create_flow_reader(flow_id.as_str())
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to create MXL reader: {}", e]
+                )
+            })
+            .unwrap();
+        assert!(reader.get_info().is_ok());
     }
 }
