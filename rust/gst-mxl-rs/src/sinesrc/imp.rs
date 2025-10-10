@@ -39,17 +39,19 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
 const DEFAULT_SAMPLES_PER_BUFFER: u32 = 1024;
 const DEFAULT_FREQ: u32 = 440;
 const DEFAULT_VOLUME: f64 = 0.8;
-const DEFAULT_MUTE: bool = false;
 const DEFAULT_IS_LIVE: bool = false;
+const DEFAULT_FLOW_ID: &str = "";
+const DEFAULT_DOMAIN: &str = "";
 
 // Property value storage
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Settings {
     samples_per_buffer: u32,
     freq: u32,
     volume: f64,
-    mute: bool,
     is_live: bool,
+    flow_id: String,
+    domain: String,
 }
 
 impl Default for Settings {
@@ -58,8 +60,9 @@ impl Default for Settings {
             samples_per_buffer: DEFAULT_SAMPLES_PER_BUFFER,
             freq: DEFAULT_FREQ,
             volume: DEFAULT_VOLUME,
-            mute: DEFAULT_MUTE,
             is_live: DEFAULT_IS_LIVE,
+            flow_id: DEFAULT_FLOW_ID.to_owned(),
+            domain: DEFAULT_DOMAIN.to_owned(),
         }
     }
 }
@@ -167,37 +170,16 @@ impl ObjectImpl for SineSrc {
     fn properties() -> &'static [glib::ParamSpec] {
         static PROPERTIES: LazyLock<Vec<glib::ParamSpec>> = LazyLock::new(|| {
             vec![
-                glib::ParamSpecUInt::builder("samples-per-buffer")
-                    .nick("Samples Per Buffer")
-                    .blurb("Number of samples per output buffer")
-                    .minimum(1)
-                    .default_value(DEFAULT_SAMPLES_PER_BUFFER)
+                glib::ParamSpecString::builder("flow-id")
+                    .nick("FlowID")
+                    .blurb("Flow ID")
+                    .default_value(DEFAULT_FLOW_ID)
                     .mutable_ready()
                     .build(),
-                glib::ParamSpecUInt::builder("freq")
-                    .nick("Frequency")
-                    .blurb("Frequency")
-                    .minimum(1)
-                    .default_value(DEFAULT_FREQ)
-                    .mutable_playing()
-                    .build(),
-                glib::ParamSpecDouble::builder("volume")
-                    .nick("Volume")
-                    .blurb("Output volume")
-                    .maximum(10.0)
-                    .default_value(DEFAULT_VOLUME)
-                    .mutable_playing()
-                    .build(),
-                glib::ParamSpecBoolean::builder("mute")
-                    .nick("Mute")
-                    .blurb("Mute")
-                    .default_value(DEFAULT_MUTE)
-                    .mutable_playing()
-                    .build(),
-                glib::ParamSpecBoolean::builder("is-live")
-                    .nick("Is Live")
-                    .blurb("(Pseudo) live output")
-                    .default_value(DEFAULT_IS_LIVE)
+                glib::ParamSpecString::builder("domain")
+                    .nick("Domain")
+                    .blurb("Domain")
+                    .default_value(DEFAULT_DOMAIN)
                     .mutable_ready()
                     .build(),
             ]
@@ -222,70 +204,29 @@ impl ObjectImpl for SineSrc {
     // at any time from any thread.
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
         match pspec.name() {
-            "samples-per-buffer" => {
+            "flow-id" => {
                 let mut settings = self.settings.lock().unwrap();
-                let samples_per_buffer = value.get().expect("type checked upstream");
+                let flow_id = value.get().expect("type checked upstream");
                 gst::info!(
                     CAT,
                     imp = self,
-                    "Changing samples-per-buffer from {} to {}",
-                    settings.samples_per_buffer,
-                    samples_per_buffer
+                    "Changing flow-id from {} to {}",
+                    settings.flow_id,
+                    flow_id
                 );
-                settings.samples_per_buffer = samples_per_buffer;
-                drop(settings);
-
-                let _ = self
-                    .obj()
-                    .post_message(gst::message::Latency::builder().src(&*self.obj()).build());
+                settings.flow_id = flow_id;
             }
-            "freq" => {
+            "domain" => {
                 let mut settings = self.settings.lock().unwrap();
-                let freq = value.get().expect("type checked upstream");
+                let domain = value.get().expect("type checked upstream");
                 gst::info!(
                     CAT,
                     imp = self,
-                    "Changing freq from {} to {}",
-                    settings.freq,
-                    freq
+                    "Changing domain from {} to {}",
+                    settings.domain,
+                    domain
                 );
-                settings.freq = freq;
-            }
-            "volume" => {
-                let mut settings = self.settings.lock().unwrap();
-                let volume = value.get().expect("type checked upstream");
-                gst::info!(
-                    CAT,
-                    imp = self,
-                    "Changing volume from {} to {}",
-                    settings.volume,
-                    volume
-                );
-                settings.volume = volume;
-            }
-            "mute" => {
-                let mut settings = self.settings.lock().unwrap();
-                let mute = value.get().expect("type checked upstream");
-                gst::info!(
-                    CAT,
-                    imp = self,
-                    "Changing mute from {} to {}",
-                    settings.mute,
-                    mute
-                );
-                settings.mute = mute;
-            }
-            "is-live" => {
-                let mut settings = self.settings.lock().unwrap();
-                let is_live = value.get().expect("type checked upstream");
-                gst::info!(
-                    CAT,
-                    imp = self,
-                    "Changing is-live from {} to {}",
-                    settings.is_live,
-                    is_live
-                );
-                settings.is_live = is_live;
+                settings.domain = domain;
             }
             _ => unimplemented!(),
         }
@@ -295,25 +236,13 @@ impl ObjectImpl for SineSrc {
     // at any time from any thread.
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
         match pspec.name() {
-            "samples-per-buffer" => {
+            "flow-id" => {
                 let settings = self.settings.lock().unwrap();
-                settings.samples_per_buffer.to_value()
+                settings.flow_id.to_value()
             }
-            "freq" => {
+            "domain" => {
                 let settings = self.settings.lock().unwrap();
-                settings.freq.to_value()
-            }
-            "volume" => {
-                let settings = self.settings.lock().unwrap();
-                settings.volume.to_value()
-            }
-            "mute" => {
-                let settings = self.settings.lock().unwrap();
-                settings.mute.to_value()
-            }
-            "is-live" => {
-                let settings = self.settings.lock().unwrap();
-                settings.is_live.to_value()
+                settings.domain.to_value()
             }
             _ => unimplemented!(),
         }
@@ -405,7 +334,7 @@ impl BaseSrcImpl for SineSrc {
         self.obj()
             .set_blocksize(info.bpf() * (self.settings.lock().unwrap()).samples_per_buffer);
 
-        let settings = *self.settings.lock().unwrap();
+        let settings = self.settings.lock().unwrap().clone();
         let mut state = self.state.lock().unwrap();
 
         // If we have no caps yet, any old sample_offset and sample_stop will be
@@ -475,7 +404,7 @@ impl BaseSrcImpl for SineSrc {
             // We can't output samples before they were produced, and the last sample of a buffer
             // is produced that much after the beginning, leading to this latency calculation
             QueryViewMut::Latency(q) => {
-                let settings = *self.settings.lock().unwrap();
+                let settings = self.settings.lock().unwrap().clone();
                 let state = self.state.lock().unwrap();
 
                 if let Some(ref info) = state.info {
@@ -531,7 +460,7 @@ impl BaseSrcImpl for SineSrc {
             return false;
         }
 
-        let settings = *self.settings.lock().unwrap();
+        let settings = self.settings.lock().unwrap().clone();
         let mut state = self.state.lock().unwrap();
 
         // We store sample_offset and sample_stop in nanoseconds if we
@@ -658,7 +587,7 @@ impl PushSrcImpl for SineSrc {
         // Keep a local copy of the values of all our properties at this very moment. This
         // ensures that the mutex is never locked for long and the application wouldn't
         // have to block until this function returns when getting/setting property values
-        let settings = *self.settings.lock().unwrap();
+        let settings = self.settings.lock().unwrap().clone();
 
         // Get a locked reference to our state, i.e. the input and output AudioInfo
         let mut state = self.state.lock().unwrap();
