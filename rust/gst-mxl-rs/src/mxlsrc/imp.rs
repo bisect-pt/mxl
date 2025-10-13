@@ -25,6 +25,8 @@ use std::time::Duration;
 
 use std::sync::LazyLock;
 
+use crate::mxlsrc;
+
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
         "rssrc",
@@ -88,7 +90,7 @@ pub struct MxlSrc {
 #[glib::object_subclass]
 impl ObjectSubclass for MxlSrc {
     const NAME: &'static str = "GstRsMxlSrc";
-    type Type = super::MxlSrc;
+    type Type = mxlsrc::MxlSrc;
     type ParentType = gst_base::PushSrc;
 }
 
