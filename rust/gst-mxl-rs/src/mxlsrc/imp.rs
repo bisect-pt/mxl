@@ -61,7 +61,6 @@ struct State {
     pub framerate: Option<gst::Fraction>,
     pub interlace_mode: Option<String>,
     pub colorimetry: Option<String>,
-    pub flow_id: Option<String>,
     reader: Option<MxlFlowReader>,
     instance: Option<MxlInstance>,
 }
@@ -263,17 +262,12 @@ impl BaseSrcImpl for MxlSrc {
             .get::<String>("colorimetry")
             .unwrap_or_else(|_| "bt709".to_string());
 
-        let flow_id = structure
-            .get::<String>("flow-id")
-            .unwrap_or_else(|_| "unknown".to_string());
-
         state.format = Some(format);
         state.width = Some(width);
         state.height = Some(height);
         state.framerate = Some(framerate);
         state.interlace_mode = Some(interlace_mode);
         state.colorimetry = Some(colorimetry);
-        state.flow_id = Some(flow_id);
 
         gst::info!(
             CAT,
@@ -472,8 +466,47 @@ mod tests {
         assert_eq!(domain, "mydomain");
     }
 
-    #[ignore]
     #[test]
+    #[ignore]
+    fn negotiate_caps() {
+        gst::init().unwrap();
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_()).unwrap();
+        let factory = gst::ElementFactory::find("mxlsrc").expect("mxlsrc not registered");
+        let pad_templates = factory.static_pad_templates();
+        assert!(!pad_templates.is_empty());
+
+        let src_templ = pad_templates
+            .iter()
+            .find(|t| t.direction() == gst::PadDirection::Src)
+            .unwrap();
+        println!("Advertised caps: {}", src_templ.caps());
+
+        let pipeline = gst::Pipeline::new();
+        let src = gst::ElementFactory::make("mxlsrc")
+            .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .unwrap();
+        let sink = gst::ElementFactory::make("fakesink").build().unwrap();
+
+        pipeline.add_many(&[&src, &sink]).unwrap();
+        gst::Element::link(&src, &sink).unwrap();
+
+        pipeline.set_state(gst::State::Playing).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let src_pad = src.static_pad("src").unwrap();
+        if let Some(caps) = src_pad.current_caps() {
+            println!("Negotiated caps: {}", caps.to_string());
+        } else {
+            println!("No negotiated caps found");
+        }
+
+        pipeline.set_state(gst::State::Null).unwrap();
+    }
+
+    #[test]
+    #[ignore]
     fn start_valid_pipeline() {
         gst::init().unwrap();
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_()).unwrap();
