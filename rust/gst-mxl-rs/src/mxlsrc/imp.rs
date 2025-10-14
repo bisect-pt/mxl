@@ -27,6 +27,8 @@ use std::sync::LazyLock;
 
 use crate::mxlsrc;
 
+const GET_GRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
         "rssrc",
@@ -37,6 +39,12 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
 
 const DEFAULT_FLOW_ID: &str = "";
 const DEFAULT_DOMAIN: &str = "";
+
+#[derive(Debug, Clone)]
+struct InitialTime {
+    mxl_index: u64,
+    gst_time: gst::ClockTime,
+}
 
 #[derive(Debug, Clone)]
 struct Settings {
@@ -62,7 +70,9 @@ struct State {
     pub interlace_mode: Option<String>,
     pub colorimetry: Option<String>,
     reader: Option<MxlFlowReader>,
-    instance: Option<MxlInstance>,
+    pub instance: Option<MxlInstance>,
+    initial_info: Option<InitialTime>,
+    frame_counter: u64,
 }
 
 struct ClockWait {
@@ -119,6 +129,7 @@ impl ObjectImpl for MxlSrc {
         self.parent_constructed();
 
         let obj = self.obj();
+        obj.set_live(true);
         obj.set_format(gst::Format::Time);
     }
 
@@ -205,11 +216,35 @@ impl ElementImpl for MxlSrc {
         static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
             let caps_struct = gst::Structure::builder("video/x-raw")
                 .field("format", "V210")
-                .field("width", gst::IntRange::<i32>::new(320, 7680))
-                .field("height", gst::IntRange::<i32>::new(240, 4320))
-                .field("framerate", gst::Fraction::new(30000, 1001))
-                .field("interlace-mode", "progressive")
-                .field("colorimetry", "bt709")
+                .field("width", gst::IntRange::new(1, 32767))
+                .field("height", gst::IntRange::new(1, 32767))
+                .field(
+                    "framerate",
+                    gst::FractionRange::new(
+                        gst::Fraction::new(0, 1),
+                        gst::Fraction::new(i32::MAX, 1),
+                    ),
+                )
+                .field(
+                    "interlace-mode",
+                    gst::List::new(["progressive", "alternate"]),
+                )
+                .field(
+                    "colorimetry",
+                    gst::List::new([
+                        "bt601",
+                        "bt709",
+                        "bt2020",
+                        "smpte240m",
+                        "smpte170m",
+                        "bt470bg",
+                        "bt470m",
+                        "film",
+                        "smpte2085",
+                        "bt2100",
+                        "smpte432",
+                    ]),
+                )
                 .build();
 
             let caps = gst::Caps::builder_full().structure(caps_struct).build();
@@ -424,28 +459,67 @@ impl PushSrcImpl for MxlSrc {
         if state.instance.is_none() {
             state.instance = Some(init_mxl_instance(&settings).map_err(|_| gst::FlowError::Error)?);
         }
+
+        // This should only be done the first time.
         let current_index = state
             .instance
             .clone()
             .ok_or(gst::FlowError::Error)?
             .get_current_index(&rate);
+        let Some(ts_gst) = self.obj().current_running_time() else {
+            return Err(gst::FlowError::Error);
+        };
+
+        let initial_info = state
+            .initial_info
+            .get_or_insert_with(|| InitialTime {
+                mxl_index: current_index,
+                gst_time: ts_gst,
+            })
+            .clone();
+
+        //let next_frame_index = initial_info.mxl_index + state.frame_counter;
+        let next_frame_index = current_index;
+
+        println!("current_index: {current_index:18}\tnext_frame_index: {next_frame_index:18}");
         let grain_reader = reader
             .to_grain_reader()
             .map_err(|_| gst::FlowError::Error)?;
-        let grain_data = grain_reader
-            .get_complete_grain(current_index, Duration::from_secs(5))
-            .map_err(|_| gst::FlowError::Error)?;
+        let grain_data = match grain_reader.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT)
+        {
+            Ok(r) => r,
 
+            Err(err) => {
+                println!("error: {err}");
+                return Ok(CreateSuccess::FilledBuffer);
+                // return Err(gst::FlowError::Error);
+            }
+        };
+
+        let pts = state.frame_counter as u128 * 1_000_000_000u128;
+        let pts = pts * rate.denominator as u128;
+        let pts = pts / rate.numerator as u128;
+        let pts = gst::ClockTime::from_nseconds(pts as u64);
+        let pts = pts + initial_info.gst_time;
         let mut buffer =
             gst::Buffer::with_size(grain_data.payload.len()).map_err(|_| gst::FlowError::Error)?;
 
         {
             let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
+            buffer.set_pts(pts);
             let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
             map.as_mut_slice().copy_from_slice(grain_data.payload);
         }
 
+        let instance = state.instance.clone().ok_or(gst::FlowError::Error)?;
+        let ts_mxl = instance.index_to_timestamp(current_index, &rate).unwrap();
+        let ts_mxl = Duration::from_nanos(ts_mxl);
+        println!("CURRENT INDEX {}", current_index);
+        println!("TS MXL {:?}", ts_mxl);
+        println!("GST TS {}", ts_gst);
         println!("Produced buffer {:?}", buffer);
+
+        state.frame_counter += 1;
 
         Ok(CreateSuccess::NewBuffer(buffer))
     }
@@ -480,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    //   #[ignore]
     fn negotiate_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
@@ -502,12 +576,15 @@ mod tests {
             .property("domain", "/mnt/mxl/domain_1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let convert = gst::ElementFactory::make("videoconvert")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let sink = gst::ElementFactory::make("fakesink")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
-            .add_many(&[&src, &sink])
+            .add_many(&[&src, &convert, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         gst::Element::link(&src, &sink)
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
@@ -515,7 +592,6 @@ mod tests {
         pipeline
             .set_state(gst::State::Playing)
             .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
-        std::thread::sleep(std::time::Duration::from_millis(200));
 
         let src_pad = src
             .static_pad("src")
@@ -526,7 +602,7 @@ mod tests {
         } else {
             println!("No negotiated caps found");
         }
-
+        std::thread::sleep(std::time::Duration::from_millis(100000));
         pipeline
             .set_state(gst::State::Null)
             .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
