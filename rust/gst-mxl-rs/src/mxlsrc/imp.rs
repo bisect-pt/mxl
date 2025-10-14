@@ -305,7 +305,12 @@ impl BaseSrcImpl for MxlSrc {
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        *self.state.lock().unwrap() = Default::default();
+        *self.state.lock().map_err(|e| {
+            gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to get settings mutex: {}", e]
+            )
+        })? = Default::default();
         self.unlock()?;
 
         gst::info!(CAT, imp = self, "Stopped");
@@ -339,7 +344,9 @@ impl BaseSrcImpl for MxlSrc {
 
     fn unlock(&self) -> Result<(), gst::ErrorMessage> {
         gst::debug!(CAT, imp = self, "Unlocking");
-        let mut clock_wait = self.clock_wait.lock().unwrap();
+        let mut clock_wait = self.clock_wait.lock().map_err(|e| {
+            gst::error_msg!(gst::CoreError::Failed, ["Failed to lock clock: {}", e])
+        })?;
         if let Some(clock_id) = clock_wait.clock_id.take() {
             clock_id.unschedule();
         }
@@ -350,7 +357,9 @@ impl BaseSrcImpl for MxlSrc {
 
     fn unlock_stop(&self) -> Result<(), gst::ErrorMessage> {
         gst::debug!(CAT, imp = self, "Unlock stop");
-        let mut clock_wait = self.clock_wait.lock().unwrap();
+        let mut clock_wait = self.clock_wait.lock().map_err(|e| {
+            gst::error_msg!(gst::CoreError::Failed, ["Failed to lock clock: {}", e])
+        })?;
         clock_wait.flushing = false;
 
         Ok(())
@@ -431,8 +440,8 @@ impl PushSrcImpl for MxlSrc {
             gst::Buffer::with_size(grain_data.payload.len()).map_err(|_| gst::FlowError::Error)?;
 
         {
-            let buffer = buffer.get_mut().unwrap();
-            let mut map = buffer.map_writable().unwrap();
+            let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
+            let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
             map.as_mut_slice().copy_from_slice(grain_data.payload);
         }
 
@@ -446,31 +455,36 @@ impl PushSrcImpl for MxlSrc {
 mod tests {
     use std::thread;
 
+    use gst::CoreError;
+
     use super::*;
 
     #[test]
-    fn set_properties() {
-        gst::init().unwrap();
-        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_()).unwrap();
+    fn set_properties() -> Result<(), glib::Error> {
+        gst::init()?;
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let element = gst::ElementFactory::make("mxlsrc")
             .property("flow-id", "test_flow")
             .property("domain", "mydomain")
             .build()
-            .unwrap();
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let flow_id: String = element.property("flow-id");
         let domain: String = element.property("domain");
 
         assert_eq!(flow_id, "test_flow");
         assert_eq!(domain, "mydomain");
+        Ok(())
     }
 
     #[test]
     #[ignore]
-    fn negotiate_caps() {
-        gst::init().unwrap();
-        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_()).unwrap();
+    fn negotiate_caps() -> Result<(), glib::Error> {
+        gst::init()?;
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let factory = gst::ElementFactory::find("mxlsrc").expect("mxlsrc not registered");
         let pad_templates = factory.static_pad_templates();
         assert!(!pad_templates.is_empty());
@@ -478,7 +492,8 @@ mod tests {
         let src_templ = pad_templates
             .iter()
             .find(|t| t.direction() == gst::PadDirection::Src)
-            .unwrap();
+            .ok_or(gst::CoreError::Failed)
+            .map_err(|_| glib::Error::new(CoreError::Pad, "Pad templates failed"))?;
         println!("Advertised caps: {}", src_templ.caps());
 
         let pipeline = gst::Pipeline::new();
@@ -486,84 +501,97 @@ mod tests {
             .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
             .property("domain", "/mnt/mxl/domain_1")
             .build()
-            .unwrap();
-        let sink = gst::ElementFactory::make("fakesink").build().unwrap();
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let sink = gst::ElementFactory::make("fakesink")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        pipeline.add_many(&[&src, &sink]).unwrap();
-        gst::Element::link(&src, &sink).unwrap();
+        pipeline
+            .add_many(&[&src, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::link(&src, &sink)
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        pipeline.set_state(gst::State::Playing).unwrap();
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
         std::thread::sleep(std::time::Duration::from_millis(200));
 
-        let src_pad = src.static_pad("src").unwrap();
+        let src_pad = src
+            .static_pad("src")
+            .ok_or(CoreError::Failed)
+            .map_err(|_| glib::Error::new(CoreError::Pad, "Source pad failed"))?;
         if let Some(caps) = src_pad.current_caps() {
             println!("Negotiated caps: {}", caps.to_string());
         } else {
             println!("No negotiated caps found");
         }
 
-        pipeline.set_state(gst::State::Null).unwrap();
+        pipeline
+            .set_state(gst::State::Null)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+        Ok(())
     }
 
     #[test]
     #[ignore]
-    fn start_valid_pipeline() {
-        gst::init().unwrap();
-        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_()).unwrap();
+    fn start_valid_pipeline() -> Result<(), glib::Error> {
+        gst::init()?;
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let src = gst::ElementFactory::make("mxlsrc")
             .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
             .property("domain", "/mnt/mxl/domain_1")
             .build()
-            .unwrap();
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        let sink = gst::ElementFactory::make("fakesink").build().unwrap();
+        let sink = gst::ElementFactory::make("fakesink")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let pipeline = gst::Pipeline::new();
-        pipeline.add_many(&[&src, &sink]).unwrap();
-        src.link(&sink).unwrap();
+        pipeline
+            .add_many(&[&src, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        src.link(&sink)
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        pipeline.set_state(gst::State::Playing).unwrap();
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
         thread::sleep(Duration::from_millis(600));
-        pipeline.set_state(gst::State::Null).unwrap();
+        pipeline
+            .set_state(gst::State::Null)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+        Ok(())
     }
 
     #[test]
     #[ignore]
-    fn is_valid_reader() {
-        gst::init().unwrap();
-        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_()).unwrap();
+    fn is_valid_reader() -> Result<(), glib::Error> {
+        gst::init()?;
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let element = gst::ElementFactory::make("mxlsrc")
             .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
             .property("domain", "/mnt/mxl/domain_1")
             .build()
-            .unwrap();
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let flow_id: String = element.property("flow-id");
         let domain: String = element.property("domain");
         let mxl_api = mxl::load_api(get_mxl_so_path())
-            .map_err(|e| gst::error_msg!(gst::CoreError::Failed, ["Failed to load MXL API: {}", e]))
-            .unwrap();
+            .map_err(|e| glib::Error::new(gst::CoreError::Failed, e.to_string().as_str()))?;
 
         let mxl_instance = mxl::MxlInstance::new(mxl_api, domain.as_str(), "")
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to load MXL instance: {}", e]
-                )
-            })
-            .unwrap();
+            .map_err(|e| glib::Error::new(gst::CoreError::Failed, e.to_string().as_str()))?;
 
         let reader = mxl_instance
             .create_flow_reader(flow_id.as_str())
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to create MXL reader: {}", e]
-                )
-            })
-            .unwrap();
+            .map_err(|e| glib::Error::new(gst::CoreError::Failed, e.to_string().as_str()))?;
         assert!(reader.get_info().is_ok());
+        Ok(())
     }
 }
