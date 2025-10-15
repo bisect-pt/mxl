@@ -215,36 +215,12 @@ impl ElementImpl for MxlSrc {
 
         static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
             let caps_struct = gst::Structure::builder("video/x-raw")
-                .field("format", "V210")
-                .field("width", gst::IntRange::new(1, 32767))
-                .field("height", gst::IntRange::new(1, 32767))
-                .field(
-                    "framerate",
-                    gst::FractionRange::new(
-                        gst::Fraction::new(0, 1),
-                        gst::Fraction::new(i32::MAX, 1),
-                    ),
-                )
-                .field(
-                    "interlace-mode",
-                    gst::List::new(["progressive", "alternate"]),
-                )
-                .field(
-                    "colorimetry",
-                    gst::List::new([
-                        "bt601",
-                        "bt709",
-                        "bt2020",
-                        "smpte240m",
-                        "smpte170m",
-                        "bt470bg",
-                        "bt470m",
-                        "film",
-                        "smpte2085",
-                        "bt2100",
-                        "smpte432",
-                    ]),
-                )
+                .field("format", "v210")
+                .field("width", 1920)
+                .field("height", 1080)
+                .field("framerate", gst::Fraction::new(30000, 1001))
+                .field("interlace-mode", "progressive")
+                .field("colorimetry", "bt709")
                 .build();
 
             let caps = gst::Caps::builder_full().structure(caps_struct).build();
@@ -284,7 +260,7 @@ impl BaseSrcImpl for MxlSrc {
 
         let format = structure
             .get::<String>("format")
-            .unwrap_or_else(|_| "unknown".to_string());
+            .unwrap_or_else(|_| "v210".to_string());
         let width = structure.get::<i32>("width").unwrap_or(1920);
         let height = structure.get::<i32>("height").unwrap_or(1080);
         let framerate = structure
@@ -362,15 +338,12 @@ impl BaseSrcImpl for MxlSrc {
         {
             let caps = caps.make_mut();
             if let Some(s) = caps.structure_mut(0) {
-                if !s.has_field("format") {
-                    s.set("format", "v210");
-                }
-                if !s.has_field("width") {
-                    s.set("width", 1920);
-                }
-                if !s.has_field("height") {
-                    s.set("height", 1080);
-                }
+                s.set("format", "v210");
+                s.set("width", 1920);
+                s.set("height", 1080);
+                s.set("framerate", gst::Fraction::new(30000, 1001));
+                s.set("interlace-mode", "progressive");
+                s.set("colorimetry", "bt709");
             }
         }
 
@@ -554,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    //   #[ignore]
+    #[ignore]
     fn negotiate_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
@@ -586,7 +559,7 @@ mod tests {
         pipeline
             .add_many(&[&src, &convert, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        gst::Element::link(&src, &sink)
+        gst::Element::link_many([&src, &convert, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
