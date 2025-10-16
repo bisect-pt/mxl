@@ -19,11 +19,11 @@ use mxl::config::get_mxl_so_path;
 use mxl::MxlFlowReader;
 use mxl::MxlInstance;
 
+use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::time::Duration;
-
-use std::sync::LazyLock;
+use std::time::Instant;
 
 use crate::mxlsrc;
 
@@ -73,6 +73,7 @@ struct State {
     pub instance: Option<MxlInstance>,
     initial_info: Option<InitialTime>,
     frame_counter: u64,
+    pub is_initialized: bool,
 }
 
 struct ClockWait {
@@ -310,6 +311,7 @@ impl BaseSrcImpl for MxlSrc {
         })?;
         let reader = init_mxl_reader(&settings)?;
         state.reader = Some(reader);
+        state.is_initialized = false;
         gst::info!(CAT, imp = self, "Started");
 
         Ok(())
@@ -434,30 +436,36 @@ impl PushSrcImpl for MxlSrc {
         }
 
         // This should only be done the first time.
-        let current_index = state
-            .instance
-            .clone()
-            .ok_or(gst::FlowError::Error)?
-            .get_current_index(&rate);
+
+        let current_index;
         let Some(ts_gst) = self.obj().current_running_time() else {
             return Err(gst::FlowError::Error);
         };
-
-        let initial_info = state
-            .initial_info
-            .get_or_insert_with(|| InitialTime {
+        if !state.is_initialized {
+            current_index = state
+                .instance
+                .as_ref()
+                .ok_or(gst::FlowError::Error)?
+                .get_current_index(&rate);
+            state.initial_info = Some(InitialTime {
                 mxl_index: current_index,
                 gst_time: ts_gst,
-            })
-            .clone();
+            });
+            state.is_initialized = true;
+        }
 
-        //let next_frame_index = initial_info.mxl_index + state.frame_counter;
-        let next_frame_index = current_index;
+        let initial_info = state.initial_info.as_ref().ok_or(gst::FlowError::Error)?;
 
-        println!("current_index: {current_index:18}\tnext_frame_index: {next_frame_index:18}");
+        let next_frame_index = initial_info.mxl_index + state.frame_counter;
+
+        // let next_frame_index = current_index;
+
+        //   println!("current_index: {current_index:18}\tnext_frame_index: {next_frame_index:18}");
         let grain_reader = reader
             .to_grain_reader()
             .map_err(|_| gst::FlowError::Error)?;
+
+        let grain_request_time = Instant::now();
         let grain_data = match grain_reader.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT)
         {
             Ok(r) => r,
@@ -468,6 +476,12 @@ impl PushSrcImpl for MxlSrc {
                 // return Err(gst::FlowError::Error);
             }
         };
+
+        println!(
+            "Grain number: {:?} Grain request time (micros): {:?}",
+            next_frame_index,
+            grain_request_time.elapsed().as_micros()
+        );
 
         let pts = state.frame_counter as u128 * 1_000_000_000u128;
         let pts = pts * rate.denominator as u128;
@@ -484,12 +498,14 @@ impl PushSrcImpl for MxlSrc {
             map.as_mut_slice().copy_from_slice(grain_data.payload);
         }
 
-        let instance = state.instance.clone().ok_or(gst::FlowError::Error)?;
-        let ts_mxl = instance.index_to_timestamp(current_index, &rate).unwrap();
+        let instance = state.instance.as_ref().ok_or(gst::FlowError::Error)?;
+        let ts_mxl = instance
+            .index_to_timestamp(initial_info.mxl_index, &rate)
+            .unwrap();
         let ts_mxl = Duration::from_nanos(ts_mxl);
-        println!("CURRENT INDEX {}", current_index);
+        println!("CURRENT INDEX {}", initial_info.mxl_index);
         println!("TS MXL {:?}", ts_mxl);
-        println!("GST TS {}", ts_gst);
+        println!("GST TS {}", initial_info.gst_time);
         println!("Produced buffer {:?}", buffer);
 
         state.frame_counter += 1;
@@ -527,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    //    #[ignore]
     fn negotiate_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
