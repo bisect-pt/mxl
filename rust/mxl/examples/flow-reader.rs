@@ -83,19 +83,19 @@ fn read_samples(
 ) -> Result<(), mxl::Error> {
     let flow_id = flow_info.common_flow_info().id().to_string();
     let sample_rate = flow_info.continuous_flow_info()?.sampleRate;
-    let continous_flow_info = flow_info.continuous_flow_info()?;
+    let common_flow_info = flow_info.common_flow_info();
     let batch_size = if let Some(batch_size) = batch_size {
-        if continous_flow_info.commitBatchSize != 0
-            && batch_size != continous_flow_info.commitBatchSize as u64
+        if common_flow_info.max_commit_batch_size_hint() != 0
+            && batch_size != common_flow_info.max_commit_batch_size_hint() as u64
         {
             warn!(
                 "Writer batch size is set to {}, but sample batch size is provided, using the \
-                latter.",
-                continous_flow_info.commitBatchSize
+                 latter.",
+                common_flow_info.max_commit_batch_size_hint()
             );
         }
         batch_size as usize
-    } else if continous_flow_info.commitBatchSize == 0 {
+    } else if common_flow_info.max_commit_batch_size_hint() == 0 {
         let batch_size = (sample_rate.numerator / (100 * sample_rate.denominator)) as usize;
         warn!(
             "Writer batch size not available, using fallback value of {}.",
@@ -103,7 +103,7 @@ fn read_samples(
         );
         batch_size
     } else {
-        continous_flow_info.commitBatchSize as usize
+        common_flow_info.max_commit_batch_size_hint() as usize
     };
     let mut read_head = reader.get_info()?.continuous_flow_info()?.headIndex;
     let mut read_head_valid_at = mxl_instance.get_time();

@@ -74,8 +74,8 @@ fn basic_mxl_grain_writing_reading() {
     let rate = flow_info.discrete_flow_info().unwrap().grainRate;
     let current_index = mxl_instance.get_current_index(&rate);
     let grain_write_access = grain_writer.open_grain(current_index).unwrap();
-    let grain_size = grain_write_access.max_size();
-    grain_write_access.commit(grain_size).unwrap();
+    let total_slices = grain_write_access.total_slices();
+    grain_write_access.commit(total_slices).unwrap();
     let grain_data = grain_reader
         .get_complete_grain(current_index, Duration::from_secs(5))
         .unwrap();

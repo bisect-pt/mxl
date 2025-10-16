@@ -75,4 +75,8 @@ impl CommonFlowInfo<'_> {
     pub fn id(&self) -> Uuid {
         Uuid::from_bytes(self.0.id)
     }
+
+    pub fn max_commit_batch_size_hint(&self) -> u32 {
+        self.0.maxCommitBatchSizeHint
+    }
 }

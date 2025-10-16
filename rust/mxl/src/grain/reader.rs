@@ -49,7 +49,7 @@ impl GrainReader {
                     &mut payload_ptr,
                 ))?;
             }
-            if grain_info.commitedSize != grain_info.grainSize {
+            if grain_info.validSlices != grain_info.totalSlices {
                 // We don't need partial grains. Wait for the grain to be complete.
                 continue;
             }

@@ -51,20 +51,20 @@ impl<'a> GrainWriteAccess<'a> {
         self.grain_info.grainSize
     }
 
-    pub fn committed_size(&self) -> u32 {
-        self.grain_info.commitedSize
+    pub fn total_slices(&self) -> u16 {
+        self.grain_info.totalSlices
     }
 
-    pub fn commit(mut self, commited_size: u32) -> Result<()> {
+    pub fn commit(mut self, valid_slices: u16) -> Result<()> {
         self.committed_or_canceled = true;
 
-        if commited_size > self.grain_info.grainSize {
+        if valid_slices > self.grain_info.totalSlices {
             return Err(Error::Other(format!(
-                "Commited size {} cannot exceed grain size {}.",
-                commited_size, self.grain_info.grainSize
+                "Valid slices {} cannot exceed total slices {}.",
+                valid_slices, self.grain_info.totalSlices
             )));
         }
-        self.grain_info.commitedSize = commited_size;
+        self.grain_info.validSlices = valid_slices;
 
         unsafe {
             Error::from_status(
