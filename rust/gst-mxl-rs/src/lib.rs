@@ -12,9 +12,11 @@
 use gst::glib;
 
 mod mxlsrc;
+mod mxlsink;
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     mxlsrc::register(plugin)?;
+    mxlsink::register(plugin)?;
     Ok(())
 }
 
