@@ -14,6 +14,7 @@ use gst::subclass::prelude::*;
 use gst_base::subclass::prelude::*;
 
 use mxl::config::get_mxl_so_path;
+use mxl::FlowInfo;
 use mxl::MxlInstance;
 
 use std::collections::HashMap;
@@ -37,13 +38,13 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
 const DEFAULT_FLOW_ID: &str = "";
 const DEFAULT_DOMAIN: &str = "";
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct GrainRate {
     numerator: i32,
     denominator: i32,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct Component {
     name: String,
     width: i32,
@@ -51,7 +52,7 @@ struct Component {
     bit_depth: u8,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct FlowDef {
     #[serde(rename = "$copyright")]
     copyright: String,
@@ -91,7 +92,7 @@ impl Default for Settings {
 #[derive(Default)]
 struct State {
     pub instance: Option<MxlInstance>,
-    pub flow_def: Option<FlowDef>,
+    pub flow: Option<FlowInfo>,
 }
 
 struct ClockWait {
@@ -271,7 +272,27 @@ impl BaseSinkImpl for MxlSink {
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        self.parent_stop()
+        let state = self.state.lock().map_err(|e| {
+            gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
+        })?;
+        self.unlock()?;
+        let settings = self.settings.lock().map_err(|e| {
+            gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
+        })?;
+        state
+            .instance
+            .as_ref()
+            .ok_or(gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to get instance on exit"]
+            ))?
+            .destroy_flow(&settings.flow_id)
+            .map_err(|e| {
+                gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
+            })?;
+
+        gst::info!(CAT, imp = self, "Stopped");
+        Ok(())
     }
 
     fn render(&self, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
@@ -381,7 +402,18 @@ impl BaseSinkImpl for MxlSink {
                 },
             ],
         };
-        state.flow_def = Some(flow_def);
+        let flow = state
+            .instance
+            .as_ref()
+            .ok_or(gst::loggable_error!(CAT, "Failed to get instance: is None"))?
+            .create_flow(
+                serde_json::to_string(&flow_def)
+                    .map_err(|e| gst::loggable_error!(CAT, "Failed to convert: {}", e))?
+                    .as_str(),
+                None,
+            )
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow: {}", e))?;
+        state.flow = Some(flow);
         Ok(())
     }
 
@@ -439,12 +471,12 @@ fn init_mxl_instance(
 
 #[cfg(test)]
 mod tests {
-    use gst::Fraction;
+    use gst::{CoreError, Fraction};
 
     use super::*;
 
     #[test]
-    fn test_flow_def_generation() {
+    fn flow_def_generation() {
         let flow_id = String::from("5fbec3b1-1b0f-417d-9059-8b94a47197ed");
         let width = 1920;
         let height = 1080;
@@ -546,5 +578,56 @@ mod tests {
         });
         println!("{:#?}", json);
         assert_eq!(json, expected);
+    }
+    #[test]
+    fn set_caps() -> Result<(), glib::Error> {
+        gst::init()?;
+        gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let sink = gst::ElementFactory::make("mxlsink")
+            .property("flow-id", "7fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .expect("Failed to create element");
+        let pipeline = gst::Pipeline::new();
+        pipeline
+            .add_many(&[&sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.to_string()))?;
+
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.to_string()))?;
+        let sink_pad = sink
+            .static_pad("sink")
+            .ok_or(CoreError::Failed)
+            .map_err(|_| glib::Error::new(CoreError::Pad, "Sink pad failed"))?;
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("format", "v210")
+            .field("width", 1920)
+            .field("height", 1080)
+            .field("framerate", gst::Fraction::new(30000, 1001))
+            .build();
+
+        sink_pad.send_event(gst::event::Caps::new(&caps));
+        if let Some(caps) = sink_pad.current_caps() {
+            println!("Negotiated caps: {}", caps.to_string());
+        } else {
+            println!("No negotiated caps found");
+        }
+        // let caps = gst::Caps::builder("video/x-raw")
+        //     .field("format", "v210")
+        //     .field("width", 1920)
+        //     .field("height", 1080)
+        //     .field("framerate", gst::Fraction::new(30000, 1001))
+        //     .field("interlace-mode", "progressive")
+        //     .field("colorimetry", "BT709")
+        //     .build();
+
+        // let sinkpad = sink.static_pad("sink").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        pipeline
+            .set_state(gst::State::Null)
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.to_string()))?;
+        Ok(())
     }
 }
