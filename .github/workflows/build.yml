@@ -210,7 +210,6 @@ jobs:
             -i mxl_build_container_with_source \
             bash -c "
               cd /workspace/mxl/rust && \
-              cargo build --all-targets --locked && \
               cargo build --release --all-targets --locked
             "
 
