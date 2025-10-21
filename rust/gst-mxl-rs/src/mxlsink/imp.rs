@@ -15,7 +15,11 @@ use gst_base::subclass::prelude::*;
 
 use mxl::config::get_mxl_so_path;
 use mxl::FlowInfo;
+use mxl::GrainWriter;
+use mxl::MxlFlowReader;
+use mxl::MxlFlowWriter;
 use mxl::MxlInstance;
+use tracing::trace;
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -93,6 +97,8 @@ impl Default for Settings {
 struct State {
     pub instance: Option<MxlInstance>,
     pub flow: Option<FlowInfo>,
+    pub writer: Option<GrainWriter>,
+    pub grain_index: u64,
 }
 
 struct ClockWait {
@@ -296,7 +302,55 @@ impl BaseSinkImpl for MxlSink {
     }
 
     fn render(&self, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
-        self.parent_render(buffer)
+        trace!("START RENDER");
+        let mut state = self.state.lock().map_err(|_| gst::FlowError::Error)?;
+        // let grain_index = state.grain_index;
+        let grain_index = state
+            .instance
+            .as_ref()
+            .ok_or(gst::FlowError::Error)?
+            .get_current_index(
+                &state
+                    .flow
+                    .as_ref()
+                    .ok_or(gst::FlowError::Error)?
+                    .discrete_flow_info()
+                    .map_err(|_| gst::FlowError::Error)?
+                    .grainRate,
+            );
+        let writer = match &mut state.writer {
+            Some(w) => w,
+            None => {
+                gst::error!(CAT, "No writer available");
+                return Err(gst::FlowError::Error);
+            }
+        };
+
+        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+        let data = map.as_slice();
+
+        let mut access = writer
+            .open_grain(grain_index)
+            .map_err(|_| gst::FlowError::Error)?;
+
+        let payload = access.payload_mut();
+        let copy_len = std::cmp::min(payload.len(), data.len());
+
+        payload[..copy_len].copy_from_slice(&data[..copy_len]);
+        access
+            .commit(copy_len as u32)
+            .map_err(|_| gst::FlowError::Error)?;
+
+        // let grain_rate = state
+        //     .flow
+        //     .as_ref()
+        //     .unwrap()
+        //     .discrete_flow_info()
+        //     .unwrap()
+        //     .grainRate;
+        //state.grain_index += 1;
+        trace!("END RENDER");
+        Ok(gst::FlowSuccess::Ok)
     }
 
     fn prepare(&self, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
@@ -402,10 +456,11 @@ impl BaseSinkImpl for MxlSink {
                 },
             ],
         };
-        let flow = state
+        let instance = state
             .instance
             .as_ref()
-            .ok_or(gst::loggable_error!(CAT, "Failed to get instance: is None"))?
+            .ok_or(gst::loggable_error!(CAT, "Failed to get instance: is None"))?;
+        let flow = instance
             .create_flow(
                 serde_json::to_string(&flow_def)
                     .map_err(|e| gst::loggable_error!(CAT, "Failed to convert: {}", e))?
@@ -413,6 +468,18 @@ impl BaseSinkImpl for MxlSink {
                 None,
             )
             .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow: {}", e))?;
+        let writer = instance
+            .create_flow_writer(flow_id.as_str())
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow writer: {}", e))?
+            .to_grain_writer()
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to create grain writer: {}", e))?;
+        let rate = flow
+            .discrete_flow_info()
+            .map_err(|_| gst::loggable_error!(CAT, "Failed to get instance: is None"))?
+            .grainRate;
+        let index = instance.get_current_index(&rate);
+        state.writer = Some(writer);
+        state.grain_index = index;
         state.flow = Some(flow);
         Ok(())
     }
@@ -614,20 +681,73 @@ mod tests {
         } else {
             println!("No negotiated caps found");
         }
-        // let caps = gst::Caps::builder("video/x-raw")
-        //     .field("format", "v210")
-        //     .field("width", 1920)
-        //     .field("height", 1080)
-        //     .field("framerate", gst::Fraction::new(30000, 1001))
-        //     .field("interlace-mode", "progressive")
-        //     .field("colorimetry", "BT709")
-        //     .build();
-
-        // let sinkpad = sink.static_pad("sink").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1000));
         pipeline
             .set_state(gst::State::Null)
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.to_string()))?;
+        Ok(())
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn valid_pipeline() -> Result<(), glib::Error> {
+        gst::init()?;
+        gst::Element::register(
+            None,
+            "mxlsrc",
+            gst::Rank::NONE,
+            crate::mxlsrc::MxlSrc::static_type(),
+        )
+        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let pipeline = gst::Pipeline::new();
+        let src = gst::ElementFactory::make("mxlsrc")
+            .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let queue1 = gst::ElementFactory::make("queue")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let convert = gst::ElementFactory::make("videoconvert")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let queue2 = gst::ElementFactory::make("queue")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let sink = gst::ElementFactory::make("mxlsink")
+            .property("flow-id", "7fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        pipeline
+            .add_many(&[&src, &queue1, &convert, &queue2, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::link_many([&src, &queue1, &convert, &queue2, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+
+        let src_pad = src
+            .static_pad("src")
+            .ok_or(CoreError::Failed)
+            .map_err(|_| glib::Error::new(CoreError::Pad, "Source pad failed"))?;
+        if let Some(caps) = src_pad.current_caps() {
+            println!("Negotiated caps: {}", caps.to_string());
+        } else {
+            println!("No negotiated caps found");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10000));
+        pipeline
+            .set_state(gst::State::Null)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
         Ok(())
     }
 }
