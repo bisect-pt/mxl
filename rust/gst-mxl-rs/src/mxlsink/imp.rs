@@ -16,8 +16,6 @@ use gst_base::subclass::prelude::*;
 use mxl::config::get_mxl_so_path;
 use mxl::FlowInfo;
 use mxl::GrainWriter;
-use mxl::MxlFlowReader;
-use mxl::MxlFlowWriter;
 use mxl::MxlInstance;
 use tracing::trace;
 
@@ -99,6 +97,13 @@ struct State {
     pub flow: Option<FlowInfo>,
     pub writer: Option<GrainWriter>,
     pub grain_index: u64,
+    pub initial_time: Option<InitialTime>,
+}
+
+#[derive(Default, Debug, Clone)]
+struct InitialTime {
+    index: u64,
+    gst_time: gst::ClockTime,
 }
 
 struct ClockWait {
@@ -304,8 +309,9 @@ impl BaseSinkImpl for MxlSink {
     fn render(&self, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
         trace!("START RENDER");
         let mut state = self.state.lock().map_err(|_| gst::FlowError::Error)?;
-        // let grain_index = state.grain_index;
-        let grain_index = state
+
+        let grain_index = state.grain_index;
+        let current_index = state
             .instance
             .as_ref()
             .ok_or(gst::FlowError::Error)?
@@ -318,6 +324,55 @@ impl BaseSinkImpl for MxlSink {
                     .map_err(|_| gst::FlowError::Error)?
                     .grainRate,
             );
+        let gst_time = self
+            .obj()
+            .current_running_time()
+            .ok_or(gst::FlowError::Error)?;
+        let _ = state.initial_time.get_or_insert_with(|| InitialTime {
+            index: current_index,
+            gst_time: gst_time,
+        });
+        let initial_info = state.initial_time.as_ref().ok_or(gst::FlowError::Error)?;
+
+        if grain_index < current_index {
+            trace!(
+                "grain index is behind head with PTS {:#?} and GST running time {:#?}",
+                buffer.pts(),
+                gst_time
+            );
+        }
+        match buffer.pts() {
+            Some(pts) => {
+                let grain_rate = state
+                    .flow
+                    .as_ref()
+                    .ok_or(gst::FlowError::Error)?
+                    .discrete_flow_info()
+                    .map_err(|_| gst::FlowError::Error)?
+                    .grainRate;
+                let pts = pts + initial_info.gst_time;
+                let index = state
+                    .instance
+                    .as_ref()
+                    .ok_or(gst::FlowError::Error)?
+                    .timestamp_to_index(pts.nseconds(), &grain_rate)
+                    .map_err(|_| gst::FlowError::Error)?
+                    + initial_info.index;
+
+                trace!(
+                    "PTS {:?} mapped to grain index {}, current index is {} and running time is {}",
+                    pts,
+                    index,
+                    current_index,
+                    gst_time
+                );
+
+                state.grain_index = index;
+            }
+            None => {
+                state.grain_index = current_index;
+            }
+        }
         let writer = match &mut state.writer {
             Some(w) => w,
             None => {
@@ -341,14 +396,7 @@ impl BaseSinkImpl for MxlSink {
             .commit(copy_len as u32)
             .map_err(|_| gst::FlowError::Error)?;
 
-        // let grain_rate = state
-        //     .flow
-        //     .as_ref()
-        //     .unwrap()
-        //     .discrete_flow_info()
-        //     .unwrap()
-        //     .grainRate;
-        //state.grain_index += 1;
+        state.grain_index += 1;
         trace!("END RENDER");
         Ok(gst::FlowSuccess::Ok)
     }
@@ -692,20 +740,29 @@ mod tests {
     #[tracing_test::traced_test]
     fn valid_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
-        gst::Element::register(
-            None,
-            "mxlsrc",
-            gst::Rank::NONE,
-            crate::mxlsrc::MxlSrc::static_type(),
-        )
-        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-
         gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let pipeline = gst::Pipeline::new();
-        let src = gst::ElementFactory::make("mxlsrc")
-            .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
-            .property("domain", "/mnt/mxl/domain_1")
+        // let src = gst::ElementFactory::make("mxlsrc")
+        //     .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
+        //     .property("domain", "/mnt/mxl/domain_1")
+        //     .build()
+        //     .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let src = gst::ElementFactory::make("videotestsrc")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("format", "v210")
+            .field("width", 1920)
+            .field("height", 1080)
+            .field("framerate", gst::Fraction::new(30000, 1001))
+            .field("interlace-mode", "progressive")
+            .field("colorimetry", "bt709")
+            .build();
+
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property("caps", &caps)
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
@@ -726,9 +783,9 @@ mod tests {
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
-            .add_many(&[&src, &queue1, &convert, &queue2, &sink])
+            .add_many(&[&src, &capsfilter, &queue1, &convert, &queue2, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        gst::Element::link_many([&src, &queue1, &convert, &queue2, &sink])
+        gst::Element::link_many([&src, &capsfilter, &queue1, &convert, &queue2, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
