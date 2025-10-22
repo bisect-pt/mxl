@@ -16,6 +16,7 @@ use gst_base::subclass::base_src::CreateSuccess;
 use gst_base::subclass::prelude::*;
 
 use mxl::config::get_mxl_so_path;
+use mxl::GrainReader;
 use mxl::MxlFlowReader;
 use mxl::MxlInstance;
 
@@ -24,10 +25,14 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::u128;
 
 use crate::mxlsrc;
 
 const GET_GRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+const LATENCY: gst::ClockTime = gst::ClockTime::from_mseconds(100);
 
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
@@ -74,6 +79,7 @@ struct State {
     initial_info: Option<InitialTime>,
     frame_counter: u64,
     pub is_initialized: bool,
+    pub grain_reader: Option<GrainReader>,
 }
 
 struct ClockWait {
@@ -417,36 +423,44 @@ impl PushSrcImpl for MxlSrc {
         let mut state = self.state.lock().map_err(|_| gst::FlowError::Error)?;
         let settings = self.settings.lock().map_err(|_| gst::FlowError::Error)?;
         if state.reader.is_none() {
-            state.reader = Some(init_mxl_reader(&settings).map_err(|_| gst::FlowError::Error)?)
+            state.reader = Some(init_mxl_reader(&settings).map_err(|_| gst::FlowError::Error)?);
         }
-        let reader = state
-            .reader
-            .take()
-            .ok_or_else(|| init_mxl_reader(&settings))
-            .map_err(|_| gst::FlowError::Error)?;
-
-        let rate = reader
-            .get_info()
-            .map_err(|_| gst::FlowError::Error)?
-            .discrete_flow_info()
-            .map_err(|_| gst::FlowError::Error)?
-            .grainRate;
         if state.instance.is_none() {
             state.instance = Some(init_mxl_instance(&settings).map_err(|_| gst::FlowError::Error)?);
         }
-
-        // This should only be done the first time.
-
         let current_index;
-        let Some(ts_gst) = self.obj().current_running_time() else {
-            return Err(gst::FlowError::Error);
-        };
-        if !state.is_initialized {
+        let rate;
+        {
+            let reader = state
+                .reader
+                .as_ref()
+                .ok_or_else(|| init_mxl_reader(&settings))
+                .map_err(|_| gst::FlowError::Error)?;
+            let binding = reader.get_info();
+            let reader_info = binding.as_ref();
+            rate = reader_info
+                .map_err(|_| gst::FlowError::Error)?
+                .discrete_flow_info()
+                .map_err(|_| gst::FlowError::Error)?
+                .grainRate;
             current_index = state
                 .instance
                 .as_ref()
                 .ok_or(gst::FlowError::Error)?
                 .get_current_index(&rate);
+        }
+        if state.grain_reader.is_none() {
+            state.grain_reader = Some(
+                init_mxl_reader(&settings)
+                    .map_err(|_| gst::FlowError::Error)?
+                    .to_grain_reader()
+                    .map_err(|_| gst::FlowError::Error)?,
+            );
+        };
+        let Some(ts_gst) = self.obj().current_running_time() else {
+            return Err(gst::FlowError::Error);
+        };
+        if !state.is_initialized {
             state.initial_info = Some(InitialTime {
                 mxl_index: current_index,
                 gst_time: ts_gst,
@@ -456,59 +470,101 @@ impl PushSrcImpl for MxlSrc {
 
         let initial_info = state.initial_info.as_ref().ok_or(gst::FlowError::Error)?;
 
-        let next_frame_index = initial_info.mxl_index + state.frame_counter;
-
-        // let next_frame_index = current_index;
-
-        //   println!("current_index: {current_index:18}\tnext_frame_index: {next_frame_index:18}");
-        let grain_reader = reader
-            .to_grain_reader()
-            .map_err(|_| gst::FlowError::Error)?;
+        let mut next_frame_index = initial_info.mxl_index + state.frame_counter;
 
         let grain_request_time = Instant::now();
-        let grain_data = match grain_reader.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT)
-        {
-            Ok(r) => r,
+        let real_time_start = SystemTime::now();
+        if next_frame_index < current_index {
+            let missed_frames = current_index - next_frame_index;
+            println!(
+                "Skipped frames! next_frame_index={} < head_index={} (lagging {})",
+                next_frame_index, current_index, missed_frames
+            );
+            next_frame_index += missed_frames;
+        }
+        let real_time_end = SystemTime::now();
+        let elapsed_real = real_time_end
+            .duration_since(real_time_start)
+            .unwrap_or_default();
 
-            Err(err) => {
-                println!("error: {err}");
-                return Ok(CreateSuccess::FilledBuffer);
-                // return Err(gst::FlowError::Error);
-            }
+        let start = real_time_start
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let end = real_time_end
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let start_hms = {
+            let total_secs = start.as_secs();
+            let hours = total_secs / 3600 % 24;
+            let minutes = total_secs / 60 % 60;
+            let seconds = total_secs % 60;
+            let millis = start.subsec_millis();
+            format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
+        };
+
+        let end_hms = {
+            let total_secs = end.as_secs();
+            let hours = total_secs / 3600 % 24;
+            let minutes = total_secs / 60 % 60;
+            let seconds = total_secs % 60;
+            let millis = end.subsec_millis();
+            format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
         };
 
         println!(
-            "Grain number: {:?} Grain request time (micros): {:?}",
+            "Grain number: {} | Grain request time: {} µs | Real time start: {} | Real time end: {} | Elapsed wall time: {} ms",
             next_frame_index,
-            grain_request_time.elapsed().as_micros()
+            grain_request_time.elapsed().as_micros(),
+            start_hms,
+            end_hms,
+            elapsed_real.as_millis()
         );
-
         let pts = state.frame_counter as u128 * 1_000_000_000u128;
         let pts = pts * rate.denominator as u128;
         let pts = pts / rate.numerator as u128;
-        let pts = gst::ClockTime::from_nseconds(pts as u64);
-        let pts = pts + initial_info.gst_time;
-        let mut buffer =
-            gst::Buffer::with_size(grain_data.payload.len()).map_err(|_| gst::FlowError::Error)?;
 
+        let pts = gst::ClockTime::from_nseconds(pts as u64);
+
+        let mut pts = pts + initial_info.gst_time;
+        let _ = initial_info;
+        let initial_info = state.initial_info.as_mut().ok_or(gst::FlowError::Error)?;
+        if pts < ts_gst {
+            let prev_pts = pts;
+            pts = pts - initial_info.gst_time;
+            initial_info.gst_time = initial_info.gst_time + ts_gst - prev_pts;
+            pts = pts + initial_info.gst_time;
+        }
+        let pts = pts + LATENCY;
+        let mut buffer;
         {
-            let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
-            buffer.set_pts(pts);
-            let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
-            map.as_mut_slice().copy_from_slice(grain_data.payload);
+            let binding = state.grain_reader.as_ref().ok_or(gst::FlowError::Error)?;
+            let grain_data = match binding.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT) {
+                Ok(r) => r,
+
+                Err(err) => {
+                    println!("error: {err}");
+                    return Err(gst::FlowError::Error);
+                }
+            };
+
+            buffer = gst::Buffer::with_size(grain_data.payload.len())
+                .map_err(|_| gst::FlowError::Error)?;
+
+            {
+                let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
+                buffer.set_pts(pts);
+                let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
+                map.as_mut_slice().copy_from_slice(grain_data.payload);
+            }
         }
 
-        let instance = state.instance.as_ref().ok_or(gst::FlowError::Error)?;
-        let ts_mxl = instance
-            .index_to_timestamp(initial_info.mxl_index, &rate)
-            .unwrap();
-        let ts_mxl = Duration::from_nanos(ts_mxl);
-        println!("CURRENT INDEX {}", initial_info.mxl_index);
-        println!("TS MXL {:?}", ts_mxl);
-        println!("GST TS {}", initial_info.gst_time);
+        println!("PTS: {:?} GST-CURRENT: {:?}", buffer.pts(), ts_gst);
         println!("Produced buffer {:?}", buffer);
-
-        state.frame_counter += 1;
+        if state.frame_counter == 0 {
+            state.frame_counter += 2;
+        } else {
+            state.frame_counter += 1;
+        }
 
         Ok(CreateSuccess::NewBuffer(buffer))
     }
@@ -543,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    //    #[ignore]
+    #[ignore]
     fn negotiate_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
@@ -561,21 +617,27 @@ mod tests {
 
         let pipeline = gst::Pipeline::new();
         let src = gst::ElementFactory::make("mxlsrc")
-            .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("flow-id", "9fbec3b1-1b0f-417d-9059-8b94a47197ed")
             .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let queue1 = gst::ElementFactory::make("queue")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let convert = gst::ElementFactory::make("videoconvert")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        let sink = gst::ElementFactory::make("fakesink")
+        let queue2 = gst::ElementFactory::make("queue")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let sink = gst::ElementFactory::make("autovideosink")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
-            .add_many(&[&src, &convert, &sink])
+            .add_many(&[&src, &queue1, &convert, &queue2, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        gst::Element::link_many([&src, &convert, &sink])
+        gst::Element::link_many([&src, &queue1, &convert, &queue2, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
