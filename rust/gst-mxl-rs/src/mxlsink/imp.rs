@@ -241,7 +241,9 @@ impl ElementImpl for MxlSink {
         use std::sync::LazyLock;
 
         static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
-            let caps = gst::Caps::new_any();
+            let caps = gst::Caps::builder("video/x-raw")
+                .field("format", "v210")
+                .build();
 
             let sink_pad_template = gst::PadTemplate::new(
                 "sink",
@@ -740,31 +742,33 @@ mod tests {
     #[tracing_test::traced_test]
     fn valid_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSink::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let pipeline = gst::Pipeline::new();
-        // let src = gst::ElementFactory::make("mxlsrc")
-        //     .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
-        //     .property("domain", "/mnt/mxl/domain_1")
+        let src = gst::ElementFactory::make("mxlsrc")
+            .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        // let src = gst::ElementFactory::make("videotestsrc")
         //     .build()
         //     .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        let src = gst::ElementFactory::make("videotestsrc")
-            .build()
-            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        let caps = gst::Caps::builder("video/x-raw")
-            .field("format", "v210")
-            .field("width", 1920)
-            .field("height", 1080)
-            .field("framerate", gst::Fraction::new(30000, 1001))
-            .field("interlace-mode", "progressive")
-            .field("colorimetry", "bt709")
-            .build();
+        // let caps = gst::Caps::builder("video/x-raw")
+        //     .field("format", "v210")
+        //     .field("width", 1920)
+        //     .field("height", 1080)
+        //     .field("framerate", gst::Fraction::new(30000, 1001))
+        //     .field("interlace-mode", "progressive")
+        //     .field("colorimetry", "bt709")
+        //     .build();
 
-        let capsfilter = gst::ElementFactory::make("capsfilter")
-            .property("caps", &caps)
-            .build()
-            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        // let capsfilter = gst::ElementFactory::make("capsfilter")
+        //     .property("caps", &caps)
+        //     .build()
+        //     .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let queue1 = gst::ElementFactory::make("queue")
             .build()
@@ -783,10 +787,14 @@ mod tests {
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
-            .add_many(&[&src, &capsfilter, &queue1, &convert, &queue2, &sink])
+            .add_many(&[
+                &src, /*&capsfilter,*/ &queue1, &convert, /*&queue2,*/ &sink,
+            ])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        gst::Element::link_many([&src, &capsfilter, &queue1, &convert, &queue2, &sink])
-            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::link_many([
+            &src, /*&capsfilter,*/ &queue1, &convert, /*&queue2,*/ &sink,
+        ])
+        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
             .set_state(gst::State::Playing)
