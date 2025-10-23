@@ -24,6 +24,7 @@ use std::ops::Deref;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+use std::time::Instant;
 
 use serde::Serialize;
 
@@ -312,7 +313,7 @@ impl BaseSinkImpl for MxlSink {
         trace!("START RENDER");
         let mut state = self.state.lock().map_err(|_| gst::FlowError::Error)?;
 
-        let grain_index = state.grain_index;
+        let mut grain_index = state.grain_index;
         let current_index = state
             .instance
             .as_ref()
@@ -342,6 +343,9 @@ impl BaseSinkImpl for MxlSink {
                 buffer.pts(),
                 gst_time
             );
+        } else if grain_index > current_index {
+            grain_index = current_index;
+            trace!("Grain_index was ahead current_index (resync)");
         }
         match buffer.pts() {
             Some(pts) => {
@@ -393,11 +397,12 @@ impl BaseSinkImpl for MxlSink {
         let payload = access.payload_mut();
         let copy_len = std::cmp::min(payload.len(), data.len());
 
+        let commit_time = Instant::now();
         payload[..copy_len].copy_from_slice(&data[..copy_len]);
         access
             .commit(copy_len as u32)
             .map_err(|_| gst::FlowError::Error)?;
-
+        trace!("Commit time: {}us", commit_time.elapsed().as_micros());
         state.grain_index += 1;
         trace!("END RENDER");
         Ok(gst::FlowSuccess::Ok)
@@ -742,8 +747,13 @@ mod tests {
     #[tracing_test::traced_test]
     fn valid_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
-        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSink::type_())
-            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::register(
+            None,
+            "mxlsrc",
+            gst::Rank::NONE,
+            crate::mxlsrc::MxlSrc::static_type(),
+        )
+        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let pipeline = gst::Pipeline::new();
@@ -788,13 +798,86 @@ mod tests {
 
         pipeline
             .add_many(&[
-                &src, /*&capsfilter,*/ &queue1, &convert, /*&queue2,*/ &sink,
+                &src, /*&capsfilter,*/ &queue1, &convert, &queue2, &sink,
             ])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         gst::Element::link_many([
-            &src, /*&capsfilter,*/ &queue1, &convert, /*&queue2,*/ &sink,
+            &src, /*&capsfilter,*/ &queue1, &convert, &queue2, &sink,
         ])
         .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+
+        let src_pad = src
+            .static_pad("src")
+            .ok_or(CoreError::Failed)
+            .map_err(|_| glib::Error::new(CoreError::Pad, "Source pad failed"))?;
+        if let Some(caps) = src_pad.current_caps() {
+            println!("Negotiated caps: {}", caps.to_string());
+        } else {
+            println!("No negotiated caps found");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10000));
+        pipeline
+            .set_state(gst::State::Null)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+        Ok(())
+    }
+    #[test]
+    #[tracing_test::traced_test]
+    fn valid_test_src_pipeline() -> Result<(), glib::Error> {
+        gst::init()?;
+        gst::Element::register(
+            None,
+            "mxlsrc",
+            gst::Rank::NONE,
+            crate::mxlsrc::MxlSrc::static_type(),
+        )
+        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let pipeline = gst::Pipeline::new();
+        let src = gst::ElementFactory::make("videotestsrc")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("format", "v210")
+            .field("width", 1920)
+            .field("height", 1080)
+            .field("framerate", gst::Fraction::new(30000, 1001))
+            .field("interlace-mode", "progressive")
+            .field("colorimetry", "bt709")
+            .build();
+
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property("caps", &caps)
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let queue1 = gst::ElementFactory::make("queue")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let convert = gst::ElementFactory::make("videoconvert")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let queue2 = gst::ElementFactory::make("queue")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let sink = gst::ElementFactory::make("mxlsink")
+            .property("flow-id", "7fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        pipeline
+            .add_many(&[&src, &capsfilter, &queue1, &convert, &queue2, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::link_many([&src, &capsfilter, &queue1, &convert, &queue2, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
             .set_state(gst::State::Playing)

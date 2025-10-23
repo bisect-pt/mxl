@@ -19,6 +19,7 @@ use mxl::config::get_mxl_so_path;
 use mxl::GrainReader;
 use mxl::MxlFlowReader;
 use mxl::MxlInstance;
+use tracing::trace;
 
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -474,6 +475,7 @@ impl PushSrcImpl for MxlSrc {
 
         let grain_request_time = Instant::now();
         let real_time_start = SystemTime::now();
+        let mut frames_ahead = 0;
         if next_frame_index < current_index {
             let missed_frames = current_index - next_frame_index;
             println!(
@@ -481,6 +483,10 @@ impl PushSrcImpl for MxlSrc {
                 next_frame_index, current_index, missed_frames
             );
             next_frame_index += missed_frames;
+        } else if next_frame_index > current_index {
+            frames_ahead = next_frame_index - current_index;
+            println!("index={} > head_index={}", next_frame_index, current_index);
+            next_frame_index -= frames_ahead;
         }
         let real_time_end = SystemTime::now();
         let elapsed_real = real_time_end
@@ -519,7 +525,7 @@ impl PushSrcImpl for MxlSrc {
             end_hms,
             elapsed_real.as_millis()
         );
-        let pts = state.frame_counter as u128 * 1_000_000_000u128;
+        let pts = (state.frame_counter - frames_ahead) as u128 * 1_000_000_000u128;
         let pts = pts * rate.denominator as u128;
         let pts = pts / rate.numerator as u128;
 
@@ -538,6 +544,7 @@ impl PushSrcImpl for MxlSrc {
         let mut buffer;
         {
             let binding = state.grain_reader.as_ref().ok_or(gst::FlowError::Error)?;
+            println!("Getting grain with index: {}", next_frame_index);
             let grain_data = match binding.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT) {
                 Ok(r) => r,
 
@@ -565,7 +572,6 @@ impl PushSrcImpl for MxlSrc {
         } else {
             state.frame_counter += 1;
         }
-
         Ok(CreateSuccess::NewBuffer(buffer))
     }
 }
