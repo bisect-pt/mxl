@@ -478,14 +478,16 @@ impl PushSrcImpl for MxlSrc {
         let mut frames_ahead = 0;
         if next_frame_index < current_index {
             let missed_frames = current_index - next_frame_index;
-            println!(
+            trace!(
                 "Skipped frames! next_frame_index={} < head_index={} (lagging {})",
-                next_frame_index, current_index, missed_frames
+                next_frame_index,
+                current_index,
+                missed_frames
             );
             next_frame_index += missed_frames;
         } else if next_frame_index > current_index {
             frames_ahead = next_frame_index - current_index;
-            println!("index={} > head_index={}", next_frame_index, current_index);
+            trace!("index={} > head_index={}", next_frame_index, current_index);
             next_frame_index -= frames_ahead;
         }
         let real_time_end = SystemTime::now();
@@ -517,7 +519,7 @@ impl PushSrcImpl for MxlSrc {
             format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
         };
 
-        println!(
+        trace!(
             "Grain number: {} | Grain request time: {} µs | Real time start: {} | Real time end: {} | Elapsed wall time: {} ms",
             next_frame_index,
             grain_request_time.elapsed().as_micros(),
@@ -544,12 +546,12 @@ impl PushSrcImpl for MxlSrc {
         let mut buffer;
         {
             let binding = state.grain_reader.as_ref().ok_or(gst::FlowError::Error)?;
-            println!("Getting grain with index: {}", next_frame_index);
+            trace!("Getting grain with index: {}", next_frame_index);
             let grain_data = match binding.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT) {
                 Ok(r) => r,
 
                 Err(err) => {
-                    println!("error: {err}");
+                    trace!("error: {err}");
                     return Err(gst::FlowError::Error);
                 }
             };
@@ -565,8 +567,8 @@ impl PushSrcImpl for MxlSrc {
             }
         }
 
-        println!("PTS: {:?} GST-CURRENT: {:?}", buffer.pts(), ts_gst);
-        println!("Produced buffer {:?}", buffer);
+        trace!("PTS: {:?} GST-CURRENT: {:?}", buffer.pts(), ts_gst);
+        trace!("Produced buffer {:?}", buffer);
         if state.frame_counter == 0 {
             state.frame_counter += 2;
         } else {
@@ -606,6 +608,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[tracing_test::traced_test]
     fn negotiate_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
@@ -619,7 +622,7 @@ mod tests {
             .find(|t| t.direction() == gst::PadDirection::Src)
             .ok_or(gst::CoreError::Failed)
             .map_err(|_| glib::Error::new(CoreError::Pad, "Pad templates failed"))?;
-        println!("Advertised caps: {}", src_templ.caps());
+        trace!("Advertised caps: {}", src_templ.caps());
 
         let pipeline = gst::Pipeline::new();
         let src = gst::ElementFactory::make("mxlsrc")
@@ -655,9 +658,9 @@ mod tests {
             .ok_or(CoreError::Failed)
             .map_err(|_| glib::Error::new(CoreError::Pad, "Source pad failed"))?;
         if let Some(caps) = src_pad.current_caps() {
-            println!("Negotiated caps: {}", caps.to_string());
+            trace!("Negotiated caps: {}", caps.to_string());
         } else {
-            println!("No negotiated caps found");
+            trace!("No negotiated caps found");
         }
         std::thread::sleep(std::time::Duration::from_millis(100000));
         pipeline
@@ -668,6 +671,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[tracing_test::traced_test]
     fn start_valid_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
