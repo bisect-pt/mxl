@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     #[ignore]
-    #[tracing_test::traced_test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
     fn negotiate_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
@@ -671,7 +671,8 @@ mod tests {
 
     #[test]
     #[ignore]
-    #[tracing_test::traced_test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+
     fn start_valid_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
@@ -706,6 +707,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
     fn is_valid_reader() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())

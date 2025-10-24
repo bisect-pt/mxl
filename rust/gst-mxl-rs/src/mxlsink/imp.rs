@@ -598,6 +598,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
     fn flow_def_generation() {
         let flow_id = String::from("5fbec3b1-1b0f-417d-9059-8b94a47197ed");
         let width = 1920;
@@ -702,6 +703,7 @@ mod tests {
         assert_eq!(json, expected);
     }
     #[test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
     fn set_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
@@ -744,7 +746,7 @@ mod tests {
     }
 
     #[test]
-    #[tracing_test::traced_test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
     fn valid_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(
@@ -762,23 +764,6 @@ mod tests {
             .property("domain", "/mnt/mxl/domain_1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        // let src = gst::ElementFactory::make("videotestsrc")
-        //     .build()
-        //     .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-
-        // let caps = gst::Caps::builder("video/x-raw")
-        //     .field("format", "v210")
-        //     .field("width", 1920)
-        //     .field("height", 1080)
-        //     .field("framerate", gst::Fraction::new(30000, 1001))
-        //     .field("interlace-mode", "progressive")
-        //     .field("colorimetry", "bt709")
-        //     .build();
-
-        // let capsfilter = gst::ElementFactory::make("capsfilter")
-        //     .property("caps", &caps)
-        //     .build()
-        //     .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let queue1 = gst::ElementFactory::make("queue")
             .build()
@@ -797,14 +782,10 @@ mod tests {
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
-            .add_many(&[
-                &src, /*&capsfilter,*/ &queue1, &convert, &queue2, &sink,
-            ])
+            .add_many(&[&src, &queue1, &convert, &queue2, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        gst::Element::link_many([
-            &src, /*&capsfilter,*/ &queue1, &convert, &queue2, &sink,
-        ])
-        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::link_many([&src, &queue1, &convert, &queue2, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
             .set_state(gst::State::Playing)
@@ -826,7 +807,7 @@ mod tests {
         Ok(())
     }
     #[test]
-    #[tracing_test::traced_test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
     fn valid_test_src_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(
