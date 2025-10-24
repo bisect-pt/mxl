@@ -22,6 +22,9 @@ regex = { version = "1", features = ["unicode-case"] }
 tracing-test = "0.1"
 mxl = { path = "../mxl" }
 
+[features]
+trace = []
+
 [lib]
 name = "gstmxlsrc"
 crate-type = ["cdylib", "rlib"]
