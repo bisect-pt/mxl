@@ -26,7 +26,7 @@ pub fn register(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
         .with_line_number(true)
         .with_thread_ids(true)
         .with_target(false)
-        .with_max_level(LevelFilter::DEBUG)
+        .with_max_level(LevelFilter::TRACE)
         .with_ansi(true)
         .finish()
         .try_init();
