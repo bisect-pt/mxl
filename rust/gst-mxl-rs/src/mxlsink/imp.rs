@@ -368,6 +368,7 @@ impl BaseSinkImpl for MxlSink {
                 );
                 if index > current_index {
                     if index - current_index > 2 {
+                        // Needs get the size of the ring buffer instead of hardcoding
                         index -= index - current_index;
                     }
                 }
@@ -763,7 +764,7 @@ mod tests {
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let pipeline = gst::Pipeline::new();
         let src = gst::ElementFactory::make("mxlsrc")
-            .property("flow-id", "9fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("flow-id", "eb542782-2de1-483b-b200-ed265f1be6b9")
             .property("domain", "/mnt/mxl/domain_1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
@@ -861,7 +862,7 @@ mod tests {
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let pipeline = gst::Pipeline::new();
         let src = gst::ElementFactory::make("mxlsrc")
-            .property("flow-id", "5fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("flow-id", "eb542782-2de1-483b-b200-ed265f1be6b9")
             .property("domain", "/mnt/mxl/domain_1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;

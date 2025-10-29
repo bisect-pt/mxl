@@ -19,8 +19,11 @@ use mxl::config::get_mxl_so_path;
 use mxl::GrainReader;
 use mxl::MxlFlowReader;
 use mxl::MxlInstance;
+use serde::Deserialize;
+use serde::Serialize;
 use tracing::trace;
 
+use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
@@ -101,6 +104,44 @@ pub struct MxlSrc {
     settings: Mutex<Settings>,
     state: Mutex<State>,
     clock_wait: Mutex<ClockWait>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GrainRate {
+    numerator: i32,
+    denominator: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Component {
+    name: String,
+    width: i32,
+    height: i32,
+    bit_depth: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FlowDef {
+    #[serde(default)]
+    #[serde(rename = "$copyright")]
+    copyright: String,
+    #[serde(default)]
+    #[serde(rename = "$license")]
+    license: String,
+
+    description: String,
+    id: String,
+    tags: HashMap<String, String>,
+    format: String,
+    label: String,
+    parents: Vec<String>,
+    media_type: String,
+    grain_rate: GrainRate,
+    frame_width: i32,
+    frame_height: i32,
+    interlace_mode: String,
+    colorspace: String,
+    components: Vec<Component>,
 }
 
 #[glib::object_subclass]
@@ -221,38 +262,7 @@ impl ElementImpl for MxlSrc {
         use std::sync::LazyLock;
 
         static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
-            let caps_struct = gst::Structure::builder("video/x-raw")
-                .field("format", "v210")
-                .field("width", gst::IntRange::new(1, 32767))
-                .field("height", gst::IntRange::new(1, 32767))
-                .field(
-                    "framerate",
-                    gst::FractionRange::new(
-                        gst::Fraction::new(0, 1),
-                        gst::Fraction::new(i32::MAX, 1),
-                    ),
-                )
-                .field("interlace-mode", gst::List::new(["progressive"]))
-                .field(
-                    "colorimetry",
-                    gst::List::new([
-                        "bt601",
-                        "bt709",
-                        "bt2020",
-                        "smpte240m",
-                        "smpte170m",
-                        "bt470bg",
-                        "bt470m",
-                        "film",
-                        "smpte2085",
-                        "bt2100",
-                        "smpte432",
-                    ]),
-                )
-                .build();
-
-            let caps = gst::Caps::builder_full().structure(caps_struct).build();
-
+            let caps = gst::Caps::new_any();
             let src_pad_template = gst::PadTemplate::new(
                 "src",
                 gst::PadDirection::Src,
@@ -288,6 +298,41 @@ impl BaseSrcImpl for MxlSrc {
             }
             _ => self.parent_event(event),
         }
+    }
+
+    fn negotiate(&self) -> Result<(), gst::LoggableError> {
+        gst::info!(CAT, imp = self, "Negotiating caps…");
+
+        let settings = self.settings.lock().unwrap();
+        if settings.domain.is_empty() || settings.flow_id.is_empty() {
+            gst::warning!(CAT, imp = self, "domain or flow-id not set yet");
+            return self.parent_negotiate();
+        }
+
+        let json_path = format!("{}/{}.mxl-flow/.json", settings.domain, settings.flow_id);
+        let data = std::fs::read_to_string(&json_path)
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to read JSON: {}", e))?;
+        let json: FlowDef = serde_json::from_str(&data)
+            .map_err(|e| gst::loggable_error!(CAT, "Invalid JSON: {}", e))?;
+
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("format", "v210")
+            .field("width", json.frame_width)
+            .field("height", json.frame_height)
+            .field(
+                "framerate",
+                gst::Fraction::new(json.grain_rate.numerator, json.grain_rate.denominator),
+            )
+            .field("interlace-mode", json.interlace_mode)
+            .field("colorimetry", json.colorspace.to_lowercase())
+            .build();
+
+        self.obj()
+            .set_caps(&caps)
+            .map_err(|err| gst::loggable_error!(CAT, "Failed to set caps: {}", err))?;
+
+        gst::info!(CAT, imp = self, "Negotiated caps: {}", caps);
+        Ok(())
     }
 
     fn set_caps(&self, caps: &gst::Caps) -> Result<(), gst::LoggableError> {
@@ -379,20 +424,7 @@ impl BaseSrcImpl for MxlSrc {
         BaseSrcImplExt::parent_query(self, query)
     }
 
-    fn fixate(&self, mut caps: gst::Caps) -> gst::Caps {
-        caps.truncate();
-        {
-            let caps = caps.make_mut();
-            if let Some(s) = caps.structure_mut(0) {
-                s.set("format", "v210");
-                s.set("width", 1920);
-                s.set("height", 1080);
-                s.set("framerate", gst::Fraction::new(30000, 1001));
-                s.set("interlace-mode", "progressive");
-                s.set("colorimetry", "bt709");
-            }
-        }
-
+    fn fixate(&self, caps: gst::Caps) -> gst::Caps {
         self.parent_fixate(caps)
     }
 
