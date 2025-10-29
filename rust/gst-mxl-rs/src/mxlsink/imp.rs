@@ -370,27 +370,14 @@ impl BaseSinkImpl for MxlSink {
                     if index - current_index > 2 {
                         index -= index - current_index;
                     }
-                } else {
-                    index = current_index;
                 }
-                // if index < current_index {
-                //     index = current_index;
-                // }
-
                 state.grain_index = index;
             }
             None => {
                 state.grain_index = current_index;
             }
         }
-        // if grain_index < current_index {
-        //     trace!(
-        //         "grain index is behind head with PTS {:#?} and GST running time {:#?}",
-        //         buffer.pts(),
-        //         gst_time
-        //     );
-        //     state.grain_index = current_index;
-        // }
+
         let writer = match &mut state.writer {
             Some(w) => w,
             None => {
