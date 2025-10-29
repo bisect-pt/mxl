@@ -33,8 +33,6 @@ use crate::mxlsrc;
 
 const GET_GRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
-const LATENCY: gst::ClockTime = gst::ClockTime::from_mseconds(100);
-
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
         "rssrc",
@@ -81,6 +79,7 @@ struct State {
     frame_counter: u64,
     pub is_initialized: bool,
     pub grain_reader: Option<GrainReader>,
+    pub latency: Option<gst::ClockTime>,
 }
 
 struct ClockWait {
@@ -224,11 +223,32 @@ impl ElementImpl for MxlSrc {
         static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
             let caps_struct = gst::Structure::builder("video/x-raw")
                 .field("format", "v210")
-                .field("width", 1920)
-                .field("height", 1080)
-                .field("framerate", gst::Fraction::new(30000, 1001))
-                .field("interlace-mode", "progressive")
-                .field("colorimetry", "bt709")
+                .field("width", gst::IntRange::new(1, 32767))
+                .field("height", gst::IntRange::new(1, 32767))
+                .field(
+                    "framerate",
+                    gst::FractionRange::new(
+                        gst::Fraction::new(0, 1),
+                        gst::Fraction::new(i32::MAX, 1),
+                    ),
+                )
+                .field("interlace-mode", gst::List::new(["progressive"]))
+                .field(
+                    "colorimetry",
+                    gst::List::new([
+                        "bt601",
+                        "bt709",
+                        "bt2020",
+                        "smpte240m",
+                        "smpte170m",
+                        "bt470bg",
+                        "bt470m",
+                        "film",
+                        "smpte2085",
+                        "bt2100",
+                        "smpte432",
+                    ]),
+                )
                 .build();
 
             let caps = gst::Caps::builder_full().structure(caps_struct).build();
@@ -256,6 +276,20 @@ impl ElementImpl for MxlSrc {
 }
 
 impl BaseSrcImpl for MxlSrc {
+    fn event(&self, event: &gst::Event) -> bool {
+        match event.view() {
+            gst::EventView::Latency(lat) => {
+                let latency = lat.latency();
+                trace!("Received LATENCY event: {:?}", latency);
+                if let Ok(mut state) = self.state.lock() {
+                    state.latency = Some(latency);
+                }
+                self.parent_event(event)
+            }
+            _ => self.parent_event(event),
+        }
+    }
+
     fn set_caps(&self, caps: &gst::Caps) -> Result<(), gst::LoggableError> {
         let mut state = self
             .state
@@ -269,17 +303,21 @@ impl BaseSrcImpl for MxlSrc {
         let format = structure
             .get::<String>("format")
             .unwrap_or_else(|_| "v210".to_string());
-        let width = structure.get::<i32>("width").unwrap_or(1920);
-        let height = structure.get::<i32>("height").unwrap_or(1080);
+        let width = structure
+            .get::<i32>("width")
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
+        let height = structure
+            .get::<i32>("height")
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
         let framerate = structure
             .get::<gst::Fraction>("framerate")
-            .unwrap_or_else(|_| gst::Fraction::new(30000, 1001));
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
         let interlace_mode = structure
             .get::<String>("interlace-mode")
-            .unwrap_or_else(|_| "progressive".to_string());
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
         let colorimetry = structure
             .get::<String>("colorimetry")
-            .unwrap_or_else(|_| "bt709".to_string());
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
 
         state.format = Some(format);
         state.width = Some(width);
@@ -288,9 +326,7 @@ impl BaseSrcImpl for MxlSrc {
         state.interlace_mode = Some(interlace_mode);
         state.colorimetry = Some(colorimetry);
 
-        gst::info!(
-            CAT,
-            imp = self,
+        trace!(
             "Negotiated caps: format={} {}x{} @ {}/{}fps, interlace={}, colorimetry={}",
             state.format.as_deref().unwrap_or("unknown"),
             width,
@@ -317,6 +353,7 @@ impl BaseSrcImpl for MxlSrc {
             )
         })?;
         let reader = init_mxl_reader(&settings)?;
+
         state.reader = Some(reader);
         state.is_initialized = false;
         gst::info!(CAT, imp = self, "Started");
@@ -475,7 +512,6 @@ impl PushSrcImpl for MxlSrc {
 
         let grain_request_time = Instant::now();
         let real_time_start = SystemTime::now();
-        let mut frames_ahead = 0;
         if next_frame_index < current_index {
             let missed_frames = current_index - next_frame_index;
             trace!(
@@ -486,7 +522,7 @@ impl PushSrcImpl for MxlSrc {
             );
             next_frame_index += missed_frames;
         } else if next_frame_index > current_index {
-            frames_ahead = next_frame_index - current_index;
+            let frames_ahead = next_frame_index - current_index;
             trace!("index={} > head_index={}", next_frame_index, current_index);
             next_frame_index -= frames_ahead;
         }
@@ -527,7 +563,7 @@ impl PushSrcImpl for MxlSrc {
             end_hms,
             elapsed_real.as_millis()
         );
-        let pts = (state.frame_counter - frames_ahead) as u128 * 1_000_000_000u128;
+        let pts = (state.frame_counter) as u128 * 1_000_000_000u128;
         let pts = pts * rate.denominator as u128;
         let pts = pts / rate.numerator as u128;
 
@@ -542,7 +578,7 @@ impl PushSrcImpl for MxlSrc {
             initial_info.gst_time = initial_info.gst_time + ts_gst - prev_pts;
             pts = pts + initial_info.gst_time;
         }
-        let pts = pts + LATENCY;
+
         let mut buffer;
         {
             let binding = state.grain_reader.as_ref().ok_or(gst::FlowError::Error)?;
