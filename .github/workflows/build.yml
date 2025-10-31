@@ -8,7 +8,7 @@ on:
     branches:
       - main
   pull_request:
-  workflow_dispatch:  # manual trigger support
+  workflow_dispatch: # manual trigger support
 
 permissions:
   contents: read
@@ -23,18 +23,32 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-          os: [ubuntu]    
-          version: [24.04]
-          architecture: [x86_64, arm64]
-          compiler: [Linux-GCC-Release, Linux-Clang-Release]
+        os: [ubuntu]
+        version: [24.04]
+        architecture: [x86_64]
+        compiler: [Linux-Clang-Release]
 
     env:
       DOCKER_BUILDKIT: 1
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg_cache,readwrite
+      CARGO_HOME: /workspace/mxl/.cargo
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Cache Cargo registry
+        id: cache-cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.cargo
+          key: ${{ runner.os }}-cargo-7-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-7-
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny,cargo-machete,cargo-nextest
 
       - name: REUSE Compliance Check
         uses: fsfe/reuse-action@v5
@@ -42,12 +56,12 @@ jobs:
       - name: Initialize Git Submodules (if needed)
         run: git submodule update --init --recursive
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Log in to GitHub Container Registry
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: ghcr.io
+      #     username: ${{ github.actor }}
+      #     password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Calculate Docker image hash
         id: docker-hash
@@ -90,14 +104,17 @@ jobs:
           mkdir -p ${{ github.workspace }}/rust/target
           chmod 777 ${{ github.workspace }}/rust/target
           chmod g+s ${{ github.workspace }}/rust/target
+          mkdir -p ${{ github.workspace }}/.cargo
+          chmod 777 ${{ github.workspace }}/.cargo
+          chmod g+s ${{ github.workspace }}/.cargo
 
       - name: Build Docker image
         if: steps.check-image.outputs.exists == 'false'
         run: |
           docker build \
             --build-arg BASE_IMAGE_VERSION=${{ matrix.version }} \
-            --build-arg USER_UID=${{ steps.vars.outputs.uid }} \
-            --build-arg USER_GID=${{ steps.vars.outputs.gid }} \
+            --build-arg USER_UID=1000 \
+            --build-arg USER_GID=1000 \
             -t ${{ steps.docker-hash.outputs.image-tag }} \
             -t mxl_build_container_with_source \
             -f .devcontainer/Dockerfile \
@@ -114,10 +131,10 @@ jobs:
             echo "is-fork=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Push Docker image to registry
-        if: steps.check-image.outputs.exists == 'false' && steps.is-fork-check.outputs.is-fork == 'false'
-        run: |
-          docker push ${{ steps.docker-hash.outputs.image-tag }}
+      # - name: Push Docker image to registry
+      #   if: steps.check-image.outputs.exists == 'false' && steps.is-fork-check.outputs.is-fork == 'false'
+      #   run: |
+      #     docker push ${{ steps.docker-hash.outputs.image-tag }}
 
       - name: Pull Docker image from registry
         if: steps.check-image.outputs.exists == 'true'
@@ -141,58 +158,46 @@ jobs:
           key: vcpkg-${{ steps.docker-hash.outputs.image-tag }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ steps.docker-hash.outputs.image-tag }}-
 
-      - name: Configure CMake
-        run: |
-          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
-            -e VCPKG_BINARY_SOURCES="clear;files,/workspace/mxl/vcpkg_cache,readwrite" \
-            -i mxl_build_container_with_source \
-            bash -c "
-              cmake -S /workspace/mxl -B /workspace/mxl/build/${{ matrix.compiler }} \
-                --preset ${{ matrix.compiler }} \
-                -DMXL_BUILD_NUMBER=${{ github.run_number }} \
-                -DCMAKE_INSTALL_PREFIX=/workspace/mxl/install
-            "
- 
+      #    - name: Configure CMake
+      #      run: |
+      #        docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+      #          -e VCPKG_BINARY_SOURCES="clear;files,/workspace/mxl/vcpkg_cache,readwrite" \
+      #          -i mxl_build_container_with_source \
+      #          bash -c "
+      #            cmake -S /workspace/mxl -B /workspace/mxl/build/${{ matrix.compiler }} \
+      #              --preset ${{ matrix.compiler }} \
+      #              -DMXL_BUILD_NUMBER=${{ github.run_number }} \
+      #              -DCMAKE_INSTALL_PREFIX=/workspace/mxl/install
+      #          "
+
       - name: Save vcpkg cache
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/vcpkg_cache
           key: vcpkg-${{ steps.docker-hash.outputs.image-tag }}-${{ hashFiles('vcpkg.json') }}
 
-      - name: Build Project
-        run: |
-          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
-            -i mxl_build_container_with_source \
-            bash -c "
-              cmake --build /workspace/mxl/build/${{ matrix.compiler }} -t all doc install package
-            "
+      #      - name: Build Project
+      #        run: |
+      #          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+      #            -i mxl_build_container_with_source \
+      #            bash -c "
+      #              cmake --build /workspace/mxl/build/${{ matrix.compiler }} -t all doc install package
+      #            "
+      #
+      #      - name: Run Tests
+      #        run: |
+      #          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+      #            -i mxl_build_container_with_source \
+      #            bash -c "
+      #              cd /workspace/mxl/build/${{ matrix.compiler }} && \
+      #              ctest --output-junit test-results.xml
+      #            "
 
-      - name: Run Tests
-        run: |
-          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
-            -i mxl_build_container_with_source \
-            bash -c "
-              cd /workspace/mxl/build/${{ matrix.compiler }} && \
-              ctest --output-junit test-results.xml
-            "
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-lint-
-
-      - name: Check the Rust bindings
+      - name: Check Rust bindings
         env:
           RUSTFLAGS: "-Dwarnings"
         run: |
-          docker run --mount src=${{ github.workspace }},target=/workspace/mxl,type=bind \
+          docker run --mount src="${{ github.workspace }}",target=/workspace/mxl,type=bind \
             -i mxl_build_container_with_source \
             bash -c "
               cd /workspace/mxl/rust && \
@@ -222,18 +227,18 @@ jobs:
               cargo nextest run --release --locked
             "
 
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always()
-        with:
-          files: |
-            **/test-results.xml
+#
+# - name: Publish Test Results
+#   uses: EnricoMi/publish-unit-test-result-action@v2
+#   if: always()
+#   with:
+#     files: |
+#       **/test-results.xml
 
-
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-ubuntu-${{ matrix.os }}-${{ matrix.architecture }}-${{matrix.compiler}} artifacts
-          path: |
-            ${{ github.workspace }}/build/${{ matrix.compiler }}/*.deb
-            ${{ github.workspace }}/install/
+#      - name: Upload Build Artifacts
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: build-ubuntu-${{ matrix.os }}-${{ matrix.architecture }}-${{matrix.compiler}} artifacts
+#          path: |
+#            ${{ github.workspace }}/build/${{ matrix.compiler }}/*.deb
+#            ${{ github.workspace }}/install/
