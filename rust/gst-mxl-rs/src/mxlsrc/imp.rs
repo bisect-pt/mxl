@@ -11,6 +11,7 @@
 use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
+use gst::ClockTime;
 use gst_base::prelude::*;
 use gst_base::subclass::base_src::CreateSuccess;
 use gst_base::subclass::prelude::*;
@@ -19,6 +20,7 @@ use mxl::config::get_mxl_so_path;
 use mxl::GrainReader;
 use mxl::MxlFlowReader;
 use mxl::MxlInstance;
+use mxl::Rational;
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::trace;
@@ -47,7 +49,7 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
 const DEFAULT_FLOW_ID: &str = "";
 const DEFAULT_DOMAIN: &str = "";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 struct InitialTime {
     mxl_index: u64,
     gst_time: gst::ClockTime,
@@ -68,21 +70,18 @@ impl Default for Settings {
     }
 }
 
-#[derive(Default)]
 struct State {
-    pub format: Option<String>,
-    pub width: Option<i32>,
-    pub height: Option<i32>,
-    pub framerate: Option<gst::Fraction>,
-    pub interlace_mode: Option<String>,
-    pub colorimetry: Option<String>,
-    reader: Option<MxlFlowReader>,
-    pub instance: Option<MxlInstance>,
-    initial_info: Option<InitialTime>,
+    instance: MxlInstance,
+    initial_info: InitialTime,
+    grain_rate: Rational,
     frame_counter: u64,
-    pub is_initialized: bool,
-    pub grain_reader: Option<GrainReader>,
-    pub latency: Option<gst::ClockTime>,
+    is_initialized: bool,
+    grain_reader: GrainReader,
+}
+
+#[derive(Default)]
+struct Context {
+    state: Option<State>,
 }
 
 struct ClockWait {
@@ -102,7 +101,7 @@ impl Default for ClockWait {
 #[derive(Default)]
 pub struct MxlSrc {
     settings: Mutex<Settings>,
-    state: Mutex<State>,
+    context: Mutex<Context>,
     clock_wait: Mutex<ClockWait>,
 }
 
@@ -287,23 +286,16 @@ impl ElementImpl for MxlSrc {
 
 impl BaseSrcImpl for MxlSrc {
     fn event(&self, event: &gst::Event) -> bool {
-        match event.view() {
-            gst::EventView::Latency(lat) => {
-                let latency = lat.latency();
-                trace!("Received LATENCY event: {:?}", latency);
-                if let Ok(mut state) = self.state.lock() {
-                    state.latency = Some(latency);
-                }
-                self.parent_event(event)
-            }
-            _ => self.parent_event(event),
-        }
+        self.parent_event(event)
     }
 
     fn negotiate(&self) -> Result<(), gst::LoggableError> {
         gst::info!(CAT, imp = self, "Negotiating caps…");
 
-        let settings = self.settings.lock().unwrap();
+        let settings = self
+            .settings
+            .lock()
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to lock settings mutex {}", e))?;
         if settings.domain.is_empty() || settings.flow_id.is_empty() {
             gst::warning!(CAT, imp = self, "domain or flow-id not set yet");
             return self.parent_negotiate();
@@ -336,11 +328,6 @@ impl BaseSrcImpl for MxlSrc {
     }
 
     fn set_caps(&self, caps: &gst::Caps) -> Result<(), gst::LoggableError> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to lock state mutex: {}", e))?;
-
         let structure = caps
             .structure(0)
             .ok_or_else(|| gst::loggable_error!(CAT, "No structure in caps {}", caps))?;
@@ -364,32 +351,27 @@ impl BaseSrcImpl for MxlSrc {
             .get::<String>("colorimetry")
             .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
 
-        state.format = Some(format);
-        state.width = Some(width);
-        state.height = Some(height);
-        state.framerate = Some(framerate);
-        state.interlace_mode = Some(interlace_mode);
-        state.colorimetry = Some(colorimetry);
-
         trace!(
             "Negotiated caps: format={} {}x{} @ {}/{}fps, interlace={}, colorimetry={}",
-            state.format.as_deref().unwrap_or("unknown"),
+            format,
             width,
             height,
             framerate.numer(),
             framerate.denom(),
-            state.interlace_mode.as_deref().unwrap_or("unknown"),
-            state.colorimetry.as_deref().unwrap_or("unknown"),
+            interlace_mode,
+            colorimetry,
         );
 
         Ok(())
     }
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().map_err(|e| {
-            gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
+        let mut context = self.context.lock().map_err(|e| {
+            gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to get context mutex: {}", e]
+            )
         })?;
-        *state = Default::default();
         self.unlock_stop()?;
         let settings = self.settings.lock().map_err(|e| {
             gst::error_msg!(
@@ -398,16 +380,57 @@ impl BaseSrcImpl for MxlSrc {
             )
         })?;
         let reader = init_mxl_reader(&settings)?;
+        let binding = reader.get_info();
+        let reader_info = binding.as_ref();
+        let grain_rate = reader_info
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to initialize MXL reader info: {}", e]
+                )
+            })?
+            .discrete_flow_info()
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to initialize MXL discrete flow info: {}", e]
+                )
+            })?
+            .grainRate;
+        let grain_reader = reader.to_grain_reader().map_err(|e| {
+            gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to initialize MXL grain reader: {}", e]
+            )
+        })?;
+        let instance = init_mxl_instance(&settings).map_err(|e| {
+            gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to initialize MXL instance: {}", e]
+            )
+        })?;
 
-        state.reader = Some(reader);
-        state.is_initialized = false;
+        let initial_info = InitialTime {
+            mxl_index: 0,
+            gst_time: ClockTime::from_mseconds(0),
+        };
+
+        context.state = Some(State {
+            instance: instance,
+            initial_info: initial_info,
+            grain_rate: grain_rate,
+            frame_counter: 0,
+            is_initialized: false,
+            grain_reader: grain_reader,
+        });
+
         gst::info!(CAT, imp = self, "Started");
 
         Ok(())
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        *self.state.lock().map_err(|e| {
+        *self.context.lock().map_err(|e| {
             gst::error_msg!(
                 gst::CoreError::Failed,
                 ["Failed to get settings mutex: {}", e]
@@ -490,58 +513,29 @@ impl PushSrcImpl for MxlSrc {
         &self,
         _buffer: Option<&mut gst::BufferRef>,
     ) -> Result<CreateSuccess, gst::FlowError> {
-        let mut state = self.state.lock().map_err(|_| gst::FlowError::Error)?;
-        let settings = self.settings.lock().map_err(|_| gst::FlowError::Error)?;
-        if state.reader.is_none() {
-            state.reader = Some(init_mxl_reader(&settings).map_err(|_| gst::FlowError::Error)?);
-        }
-        if state.instance.is_none() {
-            state.instance = Some(init_mxl_instance(&settings).map_err(|_| gst::FlowError::Error)?);
-        }
+        let mut context = self.context.lock().map_err(|_| gst::FlowError::Error)?;
+        let state = context.state.as_mut().ok_or(gst::FlowError::Error)?;
         let current_index;
-        let rate;
+        let rate = state.grain_rate;
         {
-            let reader = state
-                .reader
-                .as_ref()
-                .ok_or_else(|| init_mxl_reader(&settings))
-                .map_err(|_| gst::FlowError::Error)?;
-            let binding = reader.get_info();
-            let reader_info = binding.as_ref();
-            rate = reader_info
-                .map_err(|_| gst::FlowError::Error)?
-                .discrete_flow_info()
-                .map_err(|_| gst::FlowError::Error)?
-                .grainRate;
-            current_index = state
-                .instance
-                .as_ref()
-                .ok_or(gst::FlowError::Error)?
-                .get_current_index(&rate);
+            current_index = state.instance.get_current_index(&rate);
         }
-        if state.grain_reader.is_none() {
-            state.grain_reader = Some(
-                init_mxl_reader(&settings)
-                    .map_err(|_| gst::FlowError::Error)?
-                    .to_grain_reader()
-                    .map_err(|_| gst::FlowError::Error)?,
-            );
-        };
         let Some(ts_gst) = self.obj().current_running_time() else {
             return Err(gst::FlowError::Error);
         };
         if !state.is_initialized {
-            state.initial_info = Some(InitialTime {
+            state.initial_info = InitialTime {
                 mxl_index: current_index,
                 gst_time: ts_gst,
-            });
+            };
             state.is_initialized = true;
         }
 
-        let initial_info = state.initial_info.as_ref().ok_or(gst::FlowError::Error)?;
+        let initial_info = &state.initial_info;
 
         let mut next_frame_index = initial_info.mxl_index + state.frame_counter;
-
+        let _ = initial_info;
+        let initial_info = &state.initial_info;
         let grain_request_time = Instant::now();
         let real_time_start = SystemTime::now();
         if next_frame_index < current_index {
@@ -552,11 +546,15 @@ impl PushSrcImpl for MxlSrc {
                 current_index,
                 missed_frames
             );
-            next_frame_index += missed_frames;
+            next_frame_index = current_index;
         } else if next_frame_index > current_index {
             let frames_ahead = next_frame_index - current_index;
-            trace!("index={} > head_index={}", next_frame_index, current_index);
-            next_frame_index -= frames_ahead;
+            trace!(
+                "index={} > head_index={} (ahead {} frames)",
+                next_frame_index,
+                current_index,
+                frames_ahead
+            );
         }
         let real_time_end = SystemTime::now();
         let elapsed_real = real_time_end
@@ -595,7 +593,9 @@ impl PushSrcImpl for MxlSrc {
             end_hms,
             elapsed_real.as_millis()
         );
-        let pts = (state.frame_counter) as u128 * 1_000_000_000u128;
+        let _ = initial_info;
+        let initial_info = &state.initial_info;
+        let pts = (state.frame_counter/*+ missed_frames*/) as u128 * 1_000_000_000u128;
         let pts = pts * rate.denominator as u128;
         let pts = pts / rate.numerator as u128;
 
@@ -603,7 +603,7 @@ impl PushSrcImpl for MxlSrc {
 
         let mut pts = pts + initial_info.gst_time;
         let _ = initial_info;
-        let initial_info = state.initial_info.as_mut().ok_or(gst::FlowError::Error)?;
+        let initial_info = &mut state.initial_info;
         if pts < ts_gst {
             let prev_pts = pts;
             pts = pts - initial_info.gst_time;
@@ -613,7 +613,7 @@ impl PushSrcImpl for MxlSrc {
 
         let mut buffer;
         {
-            let binding = state.grain_reader.as_ref().ok_or(gst::FlowError::Error)?;
+            let binding = &state.grain_reader;
             trace!("Getting grain with index: {}", next_frame_index);
             let grain_data = match binding.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT) {
                 Ok(r) => r,

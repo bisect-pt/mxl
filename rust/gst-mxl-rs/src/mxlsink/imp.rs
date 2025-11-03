@@ -19,6 +19,7 @@ use mxl::config::get_mxl_so_path;
 use mxl::FlowInfo;
 use mxl::GrainWriter;
 use mxl::MxlInstance;
+use mxl::Rational;
 use tracing::trace;
 
 use std::collections::HashMap;
@@ -94,13 +95,19 @@ impl Default for Settings {
     }
 }
 
-#[derive(Default)]
 struct State {
-    pub instance: Option<MxlInstance>,
+    pub instance: MxlInstance,
     pub flow: Option<FlowInfo>,
     pub writer: Option<GrainWriter>,
-    pub grain_index: u64,
     pub initial_time: Option<InitialTime>,
+    pub grain_index: u64,
+    pub grain_rate: Rational,
+    pub grain_count: u32,
+}
+
+#[derive(Default)]
+struct Context {
+    pub state: Option<State>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -126,7 +133,7 @@ impl Default for ClockWait {
 #[derive(Default)]
 pub struct MxlSink {
     settings: Mutex<Settings>,
-    state: Mutex<State>,
+    context: Mutex<Context>,
     clock_wait: Mutex<ClockWait>,
 }
 
@@ -243,12 +250,10 @@ impl ElementImpl for MxlSink {
 
     fn pad_templates() -> &'static [gst::PadTemplate] {
         use std::sync::LazyLock;
-
         static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
             let caps = gst::Caps::builder("video/x-raw")
                 .field("format", "v210")
                 .build();
-
             let sink_pad_template = gst::PadTemplate::new(
                 "sink",
                 gst::PadDirection::Sink,
@@ -256,10 +261,8 @@ impl ElementImpl for MxlSink {
                 &caps,
             )
             .expect("Failed to create sink pad template");
-
             vec![sink_pad_template]
         });
-
         PAD_TEMPLATES.as_ref()
     }
 
@@ -273,10 +276,9 @@ impl ElementImpl for MxlSink {
 
 impl BaseSinkImpl for MxlSink {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        let mut state = self.state.lock().map_err(|e| {
+        let mut context = self.context.lock().map_err(|e| {
             gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
         })?;
-        *state = Default::default();
         self.unlock_stop()?;
         let settings = self.settings.lock().map_err(|e| {
             gst::error_msg!(
@@ -284,25 +286,40 @@ impl BaseSinkImpl for MxlSink {
                 ["Failed to get settings mutex: {}", e]
             )
         })?;
-        state.instance = Some(init_mxl_instance(&settings)?);
+        let instance = init_mxl_instance(&settings)?;
+        context.state = Some(State {
+            instance: instance,
+            flow: None,
+            writer: None,
+            initial_time: None,
+            grain_index: 0,
+            grain_rate: Rational {
+                numerator: 0,
+                denominator: 1,
+            },
+            grain_count: 0,
+        });
+
         Ok(())
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        let state = self.state.lock().map_err(|e| {
-            gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
+        let context = self.context.lock().map_err(|e| {
+            gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to get context mutex: {}", e]
+            )
         })?;
         self.unlock()?;
+        let state = context.state.as_ref().ok_or(gst::error_msg!(
+            gst::CoreError::Failed,
+            ["Failed to get state"]
+        ))?;
         let settings = self.settings.lock().map_err(|e| {
             gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
         })?;
         state
             .instance
-            .as_ref()
-            .ok_or(gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to get instance on exit"]
-            ))?
             .destroy_flow(&settings.flow_id)
             .map_err(|e| {
                 gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
@@ -314,22 +331,19 @@ impl BaseSinkImpl for MxlSink {
 
     fn render(&self, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
         trace!("START RENDER");
-        let mut state = self.state.lock().map_err(|_| gst::FlowError::Error)?;
 
-        let grain_index = state.grain_index;
-        let current_index = state
-            .instance
-            .as_ref()
-            .ok_or(gst::FlowError::Error)?
-            .get_current_index(
-                &state
-                    .flow
-                    .as_ref()
-                    .ok_or(gst::FlowError::Error)?
-                    .discrete_flow_info()
-                    .map_err(|_| gst::FlowError::Error)?
-                    .grainRate,
-            );
+        let mut context = self.context.lock().map_err(|_| gst::FlowError::Error)?;
+        let state = context.state.as_mut().ok_or(gst::FlowError::Error)?;
+
+        let current_index = state.instance.get_current_index(
+            &state
+                .flow
+                .as_ref()
+                .ok_or(gst::FlowError::Error)?
+                .discrete_flow_info()
+                .map_err(|_| gst::FlowError::Error)?
+                .grainRate,
+        );
         let gst_time = self
             .obj()
             .current_running_time()
@@ -339,22 +353,13 @@ impl BaseSinkImpl for MxlSink {
             gst_time: gst_time,
         });
         let initial_info = state.initial_time.as_ref().ok_or(gst::FlowError::Error)?;
-
+        let mut index = current_index;
         match buffer.pts() {
             Some(pts) => {
-                let grain_rate = state
-                    .flow
-                    .as_ref()
-                    .ok_or(gst::FlowError::Error)?
-                    .discrete_flow_info()
-                    .map_err(|_| gst::FlowError::Error)?
-                    .grainRate;
                 let pts = pts + initial_info.gst_time;
-                let mut index = state
+                index = state
                     .instance
-                    .as_ref()
-                    .ok_or(gst::FlowError::Error)?
-                    .timestamp_to_index(pts.nseconds(), &grain_rate)
+                    .timestamp_to_index(pts.nseconds(), &state.grain_rate)
                     .map_err(|_| gst::FlowError::Error)?
                     + initial_info.index;
 
@@ -367,9 +372,8 @@ impl BaseSinkImpl for MxlSink {
                     if pts > gst_time {pts - gst_time} else {ClockTime::from_mseconds(0)}
                 );
                 if index > current_index {
-                    if index - current_index > 2 {
-                        // Needs get the size of the ring buffer instead of hardcoding
-                        index -= index - current_index;
+                    if index - current_index > state.grain_count as u64 {
+                        index = current_index + state.grain_count as u64 - 1;
                     }
                 }
                 state.grain_index = index;
@@ -391,7 +395,7 @@ impl BaseSinkImpl for MxlSink {
         let data = map.as_slice();
 
         let mut access = writer
-            .open_grain(grain_index)
+            .open_grain(index)
             .map_err(|_| gst::FlowError::Error)?;
 
         let payload = access.payload_mut();
@@ -405,7 +409,7 @@ impl BaseSinkImpl for MxlSink {
         trace!(
             "Commit time: {}us of grain: {}",
             commit_time.elapsed().as_micros(),
-            grain_index
+            index
         );
         state.grain_index += 1;
         trace!("END RENDER");
@@ -437,10 +441,14 @@ impl BaseSinkImpl for MxlSink {
     }
 
     fn set_caps(&self, caps: &gst::Caps) -> Result<(), gst::LoggableError> {
-        let mut state = self
-            .state
+        let mut context = self
+            .context
             .lock()
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to lock state mutex: {}", e))?;
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to lock context mutex: {}", e))?;
+        let state = context
+            .state
+            .as_mut()
+            .ok_or(gst::loggable_error!(CAT, "Failed to get state",))?;
 
         let settings = self
             .settings
@@ -515,10 +523,7 @@ impl BaseSinkImpl for MxlSink {
                 },
             ],
         };
-        let instance = state
-            .instance
-            .as_ref()
-            .ok_or(gst::loggable_error!(CAT, "Failed to get instance: is None"))?;
+        let instance = &state.instance;
         let flow = instance
             .create_flow(
                 serde_json::to_string(&flow_def)
@@ -527,6 +532,14 @@ impl BaseSinkImpl for MxlSink {
                 None,
             )
             .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow: {}", e))?;
+        let grain_rate = flow
+            .discrete_flow_info()
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain rate: {}", e))?
+            .grainRate;
+        let grain_count = flow
+            .discrete_flow_info()
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain count: {}", e))?
+            .grainCount;
         let writer = instance
             .create_flow_writer(flow_id.as_str())
             .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow writer: {}", e))?
@@ -540,6 +553,8 @@ impl BaseSinkImpl for MxlSink {
         state.writer = Some(writer);
         state.grain_index = index;
         state.flow = Some(flow);
+        state.grain_rate = grain_rate;
+        state.grain_count = grain_count;
         Ok(())
     }
 
@@ -862,7 +877,7 @@ mod tests {
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let pipeline = gst::Pipeline::new();
         let src = gst::ElementFactory::make("mxlsrc")
-            .property("flow-id", "eb542782-2de1-483b-b200-ed265f1be6b9")
+            .property("flow-id", "9fbec3b1-1b0f-417d-9059-8b94a47197ed")
             .property("domain", "/mnt/mxl/domain_1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
