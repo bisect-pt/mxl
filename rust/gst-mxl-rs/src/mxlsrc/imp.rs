@@ -57,14 +57,16 @@ struct InitialTime {
 
 #[derive(Debug, Clone)]
 struct Settings {
-    flow_id: String,
+    video_flow: Option<String>,
+    audio_flow: Option<String>,
     domain: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            flow_id: DEFAULT_FLOW_ID.to_owned(),
+            video_flow: None,
+            audio_flow: None,
             domain: DEFAULT_DOMAIN.to_owned(),
         }
     }
@@ -73,10 +75,19 @@ impl Default for Settings {
 struct State {
     instance: MxlInstance,
     initial_info: InitialTime,
+    video: Option<VideoState>,
+    audio: Option<AudioState>,
+}
+
+struct VideoState {
     grain_rate: Rational,
     frame_counter: u64,
     is_initialized: bool,
     grain_reader: GrainReader,
+}
+
+struct AudioState {
+    reader: MxlFlowReader, // will be used when create() is fully implemented for audio
 }
 
 #[derive(Default)]
@@ -120,7 +131,7 @@ struct Component {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct FlowDef {
+struct FlowDefVideo {
     #[serde(default)]
     #[serde(rename = "$copyright")]
     copyright: String,
@@ -143,6 +154,34 @@ struct FlowDef {
     components: Vec<Component>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct SampleRate {
+    numerator: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FlowDefAudio {
+    #[serde(rename = "$copyright")]
+    copyright: String,
+    #[serde(rename = "$license")]
+    license: String,
+    description: String,
+    format: String,
+    tags: HashMap<String, Vec<String>>,
+    label: String,
+    id: String,
+    media_type: String,
+    sample_rate: SampleRate,
+    channel_count: i32,
+    bit_depth: u8,
+    parents: Vec<String>,
+}
+
+struct FlowDef {
+    video: Option<FlowDefVideo>,
+    audio: Option<FlowDefAudio>,
+}
+
 #[glib::object_subclass]
 impl ObjectSubclass for MxlSrc {
     const NAME: &'static str = "GstRsMxlSrc";
@@ -154,9 +193,15 @@ impl ObjectImpl for MxlSrc {
     fn properties() -> &'static [glib::ParamSpec] {
         static PROPERTIES: LazyLock<Vec<glib::ParamSpec>> = LazyLock::new(|| {
             vec![
-                glib::ParamSpecString::builder("flow-id")
-                    .nick("FlowID")
-                    .blurb("Flow ID")
+                glib::ParamSpecString::builder("video-flow")
+                    .nick("VideoFlowID")
+                    .blurb("Video Flow ID")
+                    .default_value(DEFAULT_FLOW_ID)
+                    .mutable_ready()
+                    .build(),
+                glib::ParamSpecString::builder("audio-flow")
+                    .nick("AudioFlowID")
+                    .blurb("Audio Flow ID")
                     .default_value(DEFAULT_FLOW_ID)
                     .mutable_ready()
                     .build(),
@@ -183,18 +228,18 @@ impl ObjectImpl for MxlSrc {
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
         if let Ok(mut settings) = self.settings.lock() {
             match pspec.name() {
-                "flow-id" => {
+                "video-flow" => {
                     if let Ok(flow_id) = value.get::<String>() {
-                        gst::info!(
-                            CAT,
-                            imp = self,
-                            "Changing flow-id from {} to {}",
-                            settings.flow_id,
-                            flow_id
-                        );
-                        settings.flow_id = flow_id;
+                        settings.video_flow = Some(flow_id);
                     } else {
-                        gst::error!(CAT, imp = self, "Invalid type for flow-id property");
+                        gst::error!(CAT, imp = self, "Invalid type for video-flow property");
+                    }
+                }
+                "audio-flow" => {
+                    if let Ok(flow_id) = value.get::<String>() {
+                        settings.audio_flow = Some(flow_id);
+                    } else {
+                        gst::error!(CAT, imp = self, "Invalid type for audio-flow property");
                     }
                 }
                 "domain" => {
@@ -227,7 +272,8 @@ impl ObjectImpl for MxlSrc {
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
         if let Ok(settings) = self.settings.lock() {
             match pspec.name() {
-                "flow-id" => settings.flow_id.to_value(),
+                "video_flow" => settings.video_flow.to_value(),
+                "audio_flow" => settings.video_flow.to_value(),
                 "domain" => settings.domain.to_value(),
                 _ => {
                     gst::error!(CAT, imp = self, "Unknown property {}", pspec.name());
@@ -296,35 +342,105 @@ impl BaseSrcImpl for MxlSrc {
             .settings
             .lock()
             .map_err(|e| gst::loggable_error!(CAT, "Failed to lock settings mutex {}", e))?;
-        if settings.domain.is_empty() || settings.flow_id.is_empty() {
+        if settings.audio_flow.is_some() && settings.video_flow.is_some() {
+            gst::warning!(CAT, imp = self, "You can't set both video and audio flows");
+            return self.parent_negotiate();
+        }
+        if settings.domain.is_empty()
+            || settings.video_flow.is_none() && settings.audio_flow.is_none()
+        {
             gst::warning!(CAT, imp = self, "domain or flow-id not set yet");
             return self.parent_negotiate();
         }
 
-        let json_path = format!("{}/{}.mxl-flow/.json", settings.domain, settings.flow_id);
+        let flow_id = if settings.video_flow.is_some() {
+            let video_flow_id = settings
+                .video_flow
+                .as_ref()
+                .ok_or(gst::loggable_error!(CAT, "No video flow id was found"))?;
+            video_flow_id
+        } else {
+            let audio_flow_id = settings
+                .audio_flow
+                .as_ref()
+                .ok_or(gst::loggable_error!(CAT, "No audio flow id was found"))?;
+            audio_flow_id
+        };
+
+        let json_path = format!("{}/{}.mxl-flow/.json", settings.domain, flow_id);
         let data = std::fs::read_to_string(&json_path)
             .map_err(|e| gst::loggable_error!(CAT, "Failed to read JSON: {}", e))?;
-        let json: FlowDef = serde_json::from_str(&data)
+        let serde_json: serde_json::Value = serde_json::from_str(&data)
             .map_err(|e| gst::loggable_error!(CAT, "Invalid JSON: {}", e))?;
+        let media_type = serde_json
+            .get("media_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let json = match media_type {
+            "video/v210" => {
+                let flow: FlowDefVideo = serde_json::from_value(serde_json)
+                    .map_err(|e| gst::loggable_error!(CAT, "Invalid video flow JSON: {}", e))?;
+                FlowDef {
+                    video: Some(flow),
+                    audio: None,
+                }
+            }
+            "audio/float32" => {
+                let flow: FlowDefAudio = serde_json::from_value(serde_json)
+                    .map_err(|e| gst::loggable_error!(CAT, "Invalid audio flow JSON: {}", e))?;
+                FlowDef {
+                    video: None,
+                    audio: Some(flow),
+                }
+            }
+            _ => {
+                gst::warning!(CAT, imp = self, "Unknown media_type '{}'", media_type);
+                return self.parent_negotiate();
+            }
+        };
+        match json.video {
+            Some(json) => {
+                let caps = gst::Caps::builder("video/x-raw")
+                    .field("format", "v210")
+                    .field("width", json.frame_width)
+                    .field("height", json.frame_height)
+                    .field(
+                        "framerate",
+                        gst::Fraction::new(json.grain_rate.numerator, json.grain_rate.denominator),
+                    )
+                    .field("interlace-mode", json.interlace_mode)
+                    .field("colorimetry", json.colorspace.to_lowercase())
+                    .build();
 
-        let caps = gst::Caps::builder("video/x-raw")
-            .field("format", "v210")
-            .field("width", json.frame_width)
-            .field("height", json.frame_height)
-            .field(
-                "framerate",
-                gst::Fraction::new(json.grain_rate.numerator, json.grain_rate.denominator),
-            )
-            .field("interlace-mode", json.interlace_mode)
-            .field("colorimetry", json.colorspace.to_lowercase())
-            .build();
+                self.obj()
+                    .set_caps(&caps)
+                    .map_err(|err| gst::loggable_error!(CAT, "Failed to set caps: {}", err))?;
 
-        self.obj()
-            .set_caps(&caps)
-            .map_err(|err| gst::loggable_error!(CAT, "Failed to set caps: {}", err))?;
+                gst::info!(CAT, imp = self, "Negotiated caps: {}", caps);
+                return Ok(());
+            }
+            None => match json.audio {
+                Some(json) => {
+                    let caps = gst::Caps::builder("audio/x-raw")
+                        .field("format", "F32LE")
+                        .field("rate", json.sample_rate.numerator)
+                        .field("channels", json.channel_count)
+                        .field("layout", "interleaved")
+                        .build();
+                    self.obj()
+                        .set_caps(&caps)
+                        .map_err(|err| gst::loggable_error!(CAT, "Failed to set caps: {}", err))?;
 
-        gst::info!(CAT, imp = self, "Negotiated caps: {}", caps);
-        Ok(())
+                    gst::info!(CAT, imp = self, "Negotiated caps: {}", caps);
+                    return Ok(());
+                }
+                None => {}
+            },
+        }
+        Err(gst::loggable_error!(
+            CAT,
+            "No video or audio caps were found"
+        ))
     }
 
     fn set_caps(&self, caps: &gst::Caps) -> Result<(), gst::LoggableError> {
@@ -334,35 +450,60 @@ impl BaseSrcImpl for MxlSrc {
 
         let format = structure
             .get::<String>("format")
-            .unwrap_or_else(|_| "v210".to_string());
-        let width = structure
-            .get::<i32>("width")
             .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
-        let height = structure
-            .get::<i32>("height")
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
-        let framerate = structure
-            .get::<gst::Fraction>("framerate")
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
-        let interlace_mode = structure
-            .get::<String>("interlace-mode")
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
-        let colorimetry = structure
-            .get::<String>("colorimetry")
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
+        if format == "v210" {
+            let width = structure
+                .get::<i32>("width")
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
+            let height = structure
+                .get::<i32>("height")
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
+            let framerate = structure
+                .get::<gst::Fraction>("framerate")
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
+            let interlace_mode = structure
+                .get::<String>("interlace-mode")
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
+            let colorimetry = structure
+                .get::<String>("colorimetry")
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps {}", e))?;
 
-        trace!(
-            "Negotiated caps: format={} {}x{} @ {}/{}fps, interlace={}, colorimetry={}",
-            format,
-            width,
-            height,
-            framerate.numer(),
-            framerate.denom(),
-            interlace_mode,
-            colorimetry,
-        );
+            trace!(
+                "Negotiated caps: format={} {}x{} @ {}/{}fps, interlace={}, colorimetry={}",
+                format,
+                width,
+                height,
+                framerate.numer(),
+                framerate.denom(),
+                interlace_mode,
+                colorimetry,
+            );
 
-        Ok(())
+            return Ok(());
+        } else if format == "F32LE" {
+            let rate = structure
+                .get::<i32>("rate")
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to get rate from caps: {}", e))?;
+
+            let channels = structure.get::<i32>("channels").map_err(|e| {
+                gst::loggable_error!(CAT, "Failed to get channels from caps: {}", e)
+            })?;
+
+            let format = structure
+                .get::<String>("format")
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to get format from caps: {}", e))?;
+            trace!(
+                "Negotiated caps: format={}, rate={}, channel_count={} ",
+                format,
+                rate,
+                channels
+            );
+            return Ok(());
+        }
+        Err(gst::loggable_error!(
+            CAT,
+            "Failed to set caps: No valid format"
+        ))
     }
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
@@ -379,30 +520,15 @@ impl BaseSrcImpl for MxlSrc {
                 ["Failed to get settings mutex: {}", e]
             )
         })?;
+        if settings.video_flow.is_some() && settings.audio_flow.is_some() {
+            return Err(gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Video and audio flows can't be used together"]
+            ));
+        }
         let reader = init_mxl_reader(&settings)?;
         let binding = reader.get_info();
         let reader_info = binding.as_ref();
-        let grain_rate = reader_info
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to initialize MXL reader info: {}", e]
-                )
-            })?
-            .discrete_flow_info()
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to initialize MXL discrete flow info: {}", e]
-                )
-            })?
-            .grainRate;
-        let grain_reader = reader.to_grain_reader().map_err(|e| {
-            gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to initialize MXL grain reader: {}", e]
-            )
-        })?;
         let instance = init_mxl_instance(&settings).map_err(|e| {
             gst::error_msg!(
                 gst::CoreError::Failed,
@@ -414,15 +540,48 @@ impl BaseSrcImpl for MxlSrc {
             mxl_index: 0,
             gst_time: ClockTime::from_mseconds(0),
         };
+        if settings.video_flow.is_some() {
+            let grain_rate = reader_info
+                .map_err(|e| {
+                    gst::error_msg!(
+                        gst::CoreError::Failed,
+                        ["Failed to initialize MXL reader info: {}", e]
+                    )
+                })?
+                .discrete_flow_info()
+                .map_err(|e| {
+                    gst::error_msg!(
+                        gst::CoreError::Failed,
+                        ["Failed to initialize MXL discrete flow info: {}", e]
+                    )
+                })?
+                .grainRate;
+            let grain_reader = reader.to_grain_reader().map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to initialize MXL grain reader: {}", e]
+                )
+            })?;
 
-        context.state = Some(State {
-            instance: instance,
-            initial_info: initial_info,
-            grain_rate: grain_rate,
-            frame_counter: 0,
-            is_initialized: false,
-            grain_reader: grain_reader,
-        });
+            context.state = Some(State {
+                instance: instance,
+                initial_info: initial_info,
+                video: Some(VideoState {
+                    grain_rate: grain_rate,
+                    frame_counter: 0,
+                    is_initialized: false,
+                    grain_reader: grain_reader,
+                }),
+                audio: None,
+            });
+        } else if settings.audio_flow.is_some() {
+            context.state = Some(State {
+                instance,
+                initial_info,
+                video: None,
+                audio: Some(AudioState { reader }),
+            })
+        }
 
         gst::info!(CAT, imp = self, "Started");
 
@@ -479,15 +638,46 @@ fn init_mxl_reader(
     settings: &MutexGuard<'_, Settings>,
 ) -> Result<MxlFlowReader, gst::ErrorMessage> {
     let mxl_instance = init_mxl_instance(settings)?;
-
-    let reader = mxl_instance
-        .create_flow_reader(settings.flow_id.as_str())
-        .map_err(|e| {
-            gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to create MXL reader: {}", e]
+    let reader = if settings.video_flow.is_some() {
+        let reader = mxl_instance
+            .create_flow_reader(
+                settings
+                    .video_flow
+                    .as_ref()
+                    .ok_or(gst::error_msg!(
+                        gst::CoreError::Failed,
+                        ["Failed to create MXL reader: Video flow id is None"]
+                    ))?
+                    .as_str(),
             )
-        })?;
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to create MXL reader: {}", e]
+                )
+            })?;
+        reader
+    } else {
+        let reader = mxl_instance
+            .create_flow_reader(
+                settings
+                    .audio_flow
+                    .as_ref()
+                    .ok_or(gst::error_msg!(
+                        gst::CoreError::Failed,
+                        ["Failed to create MXL reader: Audio flow id is None"]
+                    ))?
+                    .as_str(),
+            )
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to create MXL reader: {}", e]
+                )
+            })?;
+        reader
+    };
+
     Ok(reader)
 }
 
@@ -515,134 +705,150 @@ impl PushSrcImpl for MxlSrc {
     ) -> Result<CreateSuccess, gst::FlowError> {
         let mut context = self.context.lock().map_err(|_| gst::FlowError::Error)?;
         let state = context.state.as_mut().ok_or(gst::FlowError::Error)?;
-        let current_index;
-        let rate = state.grain_rate;
-        {
-            current_index = state.instance.get_current_index(&rate);
-        }
-        let Some(ts_gst) = self.obj().current_running_time() else {
-            return Err(gst::FlowError::Error);
-        };
-        if !state.is_initialized {
-            state.initial_info = InitialTime {
-                mxl_index: current_index,
-                gst_time: ts_gst,
+        if state.video.is_some() {
+            let video_state = state.video.as_mut().ok_or(gst::FlowError::Error)?;
+            let current_index;
+            let rate = video_state.grain_rate;
+            {
+                current_index = state.instance.get_current_index(&rate);
+            }
+            let Some(ts_gst) = self.obj().current_running_time() else {
+                return Err(gst::FlowError::Error);
             };
-            state.is_initialized = true;
-        }
+            if !video_state.is_initialized {
+                state.initial_info = InitialTime {
+                    mxl_index: current_index,
+                    gst_time: ts_gst,
+                };
+                video_state.is_initialized = true;
+            }
 
-        let initial_info = &state.initial_info;
+            let initial_info = &state.initial_info;
 
-        let mut next_frame_index = initial_info.mxl_index + state.frame_counter;
-        let _ = initial_info;
-        let initial_info = &state.initial_info;
-        let grain_request_time = Instant::now();
-        let real_time_start = SystemTime::now();
-        if next_frame_index < current_index {
-            let missed_frames = current_index - next_frame_index;
+            let mut next_frame_index = initial_info.mxl_index + video_state.frame_counter;
+            let _ = initial_info;
+            let initial_info = &state.initial_info;
+            let grain_request_time = Instant::now();
+            let real_time_start = SystemTime::now();
+            if next_frame_index < current_index {
+                let missed_frames = current_index - next_frame_index;
+                trace!(
+                    "Skipped frames! next_frame_index={} < head_index={} (lagging {})",
+                    next_frame_index,
+                    current_index,
+                    missed_frames
+                );
+                next_frame_index = current_index;
+            } else if next_frame_index > current_index {
+                let frames_ahead = next_frame_index - current_index;
+                trace!(
+                    "index={} > head_index={} (ahead {} frames)",
+                    next_frame_index,
+                    current_index,
+                    frames_ahead
+                );
+            }
+            let real_time_end = SystemTime::now();
+            let elapsed_real = real_time_end
+                .duration_since(real_time_start)
+                .unwrap_or_default();
+
+            let start = real_time_start
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
+            let end = real_time_end
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default();
+            let start_hms = {
+                let total_secs = start.as_secs();
+                let hours = total_secs / 3600 % 24;
+                let minutes = total_secs / 60 % 60;
+                let seconds = total_secs % 60;
+                let millis = start.subsec_millis();
+                format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
+            };
+
+            let end_hms = {
+                let total_secs = end.as_secs();
+                let hours = total_secs / 3600 % 24;
+                let minutes = total_secs / 60 % 60;
+                let seconds = total_secs % 60;
+                let millis = end.subsec_millis();
+                format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
+            };
+
             trace!(
-                "Skipped frames! next_frame_index={} < head_index={} (lagging {})",
+                "Grain number: {} | Grain request time: {} µs | Real time start: {} | Real time end: {} | Elapsed wall time: {} ms",
                 next_frame_index,
-                current_index,
-                missed_frames
+                grain_request_time.elapsed().as_micros(),
+                start_hms,
+                end_hms,
+                elapsed_real.as_millis()
             );
-            next_frame_index = current_index;
-        } else if next_frame_index > current_index {
-            let frames_ahead = next_frame_index - current_index;
-            trace!(
-                "index={} > head_index={} (ahead {} frames)",
-                next_frame_index,
-                current_index,
-                frames_ahead
-            );
-        }
-        let real_time_end = SystemTime::now();
-        let elapsed_real = real_time_end
-            .duration_since(real_time_start)
-            .unwrap_or_default();
+            let _ = initial_info;
+            let initial_info = &state.initial_info;
+            let pts = (video_state.frame_counter/*+ missed_frames*/) as u128 * 1_000_000_000u128;
+            let pts = pts * rate.denominator as u128;
+            let pts = pts / rate.numerator as u128;
 
-        let start = real_time_start
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default();
-        let end = real_time_end
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default();
-        let start_hms = {
-            let total_secs = start.as_secs();
-            let hours = total_secs / 3600 % 24;
-            let minutes = total_secs / 60 % 60;
-            let seconds = total_secs % 60;
-            let millis = start.subsec_millis();
-            format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
-        };
+            let pts = gst::ClockTime::from_nseconds(pts as u64);
 
-        let end_hms = {
-            let total_secs = end.as_secs();
-            let hours = total_secs / 3600 % 24;
-            let minutes = total_secs / 60 % 60;
-            let seconds = total_secs % 60;
-            let millis = end.subsec_millis();
-            format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
-        };
+            let mut pts = pts + initial_info.gst_time;
+            let _ = initial_info;
+            let initial_info = &mut state.initial_info;
+            if pts < ts_gst {
+                let prev_pts = pts;
+                pts = pts - initial_info.gst_time;
+                initial_info.gst_time = initial_info.gst_time + ts_gst - prev_pts;
+                pts = pts + initial_info.gst_time;
+            }
 
-        trace!(
-            "Grain number: {} | Grain request time: {} µs | Real time start: {} | Real time end: {} | Elapsed wall time: {} ms",
-            next_frame_index,
-            grain_request_time.elapsed().as_micros(),
-            start_hms,
-            end_hms,
-            elapsed_real.as_millis()
-        );
-        let _ = initial_info;
-        let initial_info = &state.initial_info;
-        let pts = (state.frame_counter/*+ missed_frames*/) as u128 * 1_000_000_000u128;
-        let pts = pts * rate.denominator as u128;
-        let pts = pts / rate.numerator as u128;
+            let mut buffer;
+            {
+                let binding = &video_state.grain_reader;
+                trace!("Getting grain with index: {}", next_frame_index);
+                let grain_data =
+                    match binding.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT) {
+                        Ok(r) => r,
 
-        let pts = gst::ClockTime::from_nseconds(pts as u64);
+                        Err(err) => {
+                            trace!("error: {err}");
+                            return Err(gst::FlowError::Error);
+                        }
+                    };
 
-        let mut pts = pts + initial_info.gst_time;
-        let _ = initial_info;
-        let initial_info = &mut state.initial_info;
-        if pts < ts_gst {
-            let prev_pts = pts;
-            pts = pts - initial_info.gst_time;
-            initial_info.gst_time = initial_info.gst_time + ts_gst - prev_pts;
-            pts = pts + initial_info.gst_time;
-        }
+                buffer = gst::Buffer::with_size(grain_data.payload.len())
+                    .map_err(|_| gst::FlowError::Error)?;
 
-        let mut buffer;
-        {
-            let binding = &state.grain_reader;
-            trace!("Getting grain with index: {}", next_frame_index);
-            let grain_data = match binding.get_complete_grain(next_frame_index, GET_GRAIN_TIMEOUT) {
-                Ok(r) => r,
-
-                Err(err) => {
-                    trace!("error: {err}");
-                    return Err(gst::FlowError::Error);
+                {
+                    let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
+                    buffer.set_pts(pts);
+                    let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
+                    map.as_mut_slice().copy_from_slice(grain_data.payload);
                 }
-            };
+            }
 
-            buffer = gst::Buffer::with_size(grain_data.payload.len())
-                .map_err(|_| gst::FlowError::Error)?;
-
+            trace!("PTS: {:?} GST-CURRENT: {:?}", buffer.pts(), ts_gst);
+            trace!("Produced buffer {:?}", buffer);
+            if video_state.frame_counter == 0 {
+                video_state.frame_counter += 2;
+            } else {
+                video_state.frame_counter += 1;
+            }
+            Ok(CreateSuccess::NewBuffer(buffer))
+        } else if state.audio.is_some() {
+            let mut buffer = gst::Buffer::with_size(1024 * 4).unwrap();
             {
                 let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
-                buffer.set_pts(pts);
-                let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
-                map.as_mut_slice().copy_from_slice(grain_data.payload);
+                let mut map = buffer.map_writable().unwrap();
+                for (i, b) in map.as_mut_slice().iter_mut().enumerate() {
+                    *b = ((i / 4) % 256) as u8;
+                }
             }
-        }
-
-        trace!("PTS: {:?} GST-CURRENT: {:?}", buffer.pts(), ts_gst);
-        trace!("Produced buffer {:?}", buffer);
-        if state.frame_counter == 0 {
-            state.frame_counter += 2;
+            Ok(CreateSuccess::NewBuffer(buffer))
         } else {
-            state.frame_counter += 1;
+            Err(gst::FlowError::Error)
         }
-        Ok(CreateSuccess::NewBuffer(buffer))
     }
 }
 
@@ -761,6 +967,44 @@ mod tests {
             .add_many(&[&src, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         src.link(&sink)
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+        thread::sleep(Duration::from_millis(600));
+        pipeline
+            .set_state(gst::State::Null)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+
+    fn start_valid_audio_pipeline() -> Result<(), glib::Error> {
+        gst::init()?;
+        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let src = gst::ElementFactory::make("mxlsrc")
+            .property("audio-flow", "8fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_1")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let convert = gst::ElementFactory::make("audioconvert")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let sink = gst::ElementFactory::make("fakesink")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let pipeline = gst::Pipeline::new();
+        pipeline
+            .add_many(&[&src, &convert, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::link_many([&src, &convert, &sink])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         pipeline
