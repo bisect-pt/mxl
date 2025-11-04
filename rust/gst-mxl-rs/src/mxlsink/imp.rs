@@ -20,6 +20,7 @@ use mxl::FlowInfo;
 use mxl::GrainWriter;
 use mxl::MxlInstance;
 use mxl::Rational;
+use mxl::SamplesWriter;
 use tracing::trace;
 
 use std::collections::HashMap;
@@ -45,6 +46,29 @@ const DEFAULT_FLOW_ID: &str = "";
 const DEFAULT_DOMAIN: &str = "";
 
 #[derive(Debug, Serialize)]
+struct SampleRate {
+    numerator: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct AudioFlowDef {
+    #[serde(rename = "$copyright")]
+    copyright: String,
+    #[serde(rename = "$license")]
+    license: String,
+    description: String,
+    format: String,
+    tags: HashMap<String, Vec<String>>,
+    label: String,
+    id: String,
+    media_type: String,
+    sample_rate: SampleRate,
+    channel_count: i32,
+    bit_depth: u8,
+    parents: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct GrainRate {
     numerator: i32,
     denominator: i32,
@@ -67,7 +91,7 @@ struct FlowDef {
 
     description: String,
     id: String,
-    tags: HashMap<String, String>,
+    tags: HashMap<String, Vec<String>>,
     format: String,
     label: String,
     parents: Vec<String>,
@@ -98,11 +122,21 @@ impl Default for Settings {
 struct State {
     pub instance: MxlInstance,
     pub flow: Option<FlowInfo>,
-    pub writer: Option<GrainWriter>,
+    pub video: Option<VideoState>,
+    pub audio: Option<AudioState>,
     pub initial_time: Option<InitialTime>,
+}
+
+struct VideoState {
+    pub writer: GrainWriter,
     pub grain_index: u64,
     pub grain_rate: Rational,
     pub grain_count: u32,
+}
+
+struct AudioState {
+    pub writer: SamplesWriter,
+    pub bit_depth: u8,
 }
 
 #[derive(Default)]
@@ -247,13 +281,27 @@ impl ElementImpl for MxlSink {
 
         Some(&*ELEMENT_METADATA)
     }
-
     fn pad_templates() -> &'static [gst::PadTemplate] {
         use std::sync::LazyLock;
+
         static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
-            let caps = gst::Caps::builder("video/x-raw")
-                .field("format", "v210")
-                .build();
+            let mut caps = gst::Caps::new_empty();
+            {
+                let caps_mut = caps.make_mut();
+
+                caps_mut.append(
+                    gst::Caps::builder("video/x-raw")
+                        .field("format", "v210")
+                        .build(),
+                );
+                caps_mut.append(
+                    gst::Caps::builder("audio/x-raw")
+                        .field("format", "F32LE")
+                        .field("layout", "non-interleaved")
+                        .build(),
+                );
+            }
+
             let sink_pad_template = gst::PadTemplate::new(
                 "sink",
                 gst::PadDirection::Sink,
@@ -290,14 +338,9 @@ impl BaseSinkImpl for MxlSink {
         context.state = Some(State {
             instance: instance,
             flow: None,
-            writer: None,
             initial_time: None,
-            grain_index: 0,
-            grain_rate: Rational {
-                numerator: 0,
-                denominator: 1,
-            },
-            grain_count: 0,
+            video: None,
+            audio: None,
         });
 
         Ok(())
@@ -334,86 +377,11 @@ impl BaseSinkImpl for MxlSink {
 
         let mut context = self.context.lock().map_err(|_| gst::FlowError::Error)?;
         let state = context.state.as_mut().ok_or(gst::FlowError::Error)?;
-
-        let current_index = state.instance.get_current_index(
-            &state
-                .flow
-                .as_ref()
-                .ok_or(gst::FlowError::Error)?
-                .discrete_flow_info()
-                .map_err(|_| gst::FlowError::Error)?
-                .grainRate,
-        );
-        let gst_time = self
-            .obj()
-            .current_running_time()
-            .ok_or(gst::FlowError::Error)?;
-        let _ = state.initial_time.get_or_insert_with(|| InitialTime {
-            index: current_index,
-            gst_time: gst_time,
-        });
-        let initial_info = state.initial_time.as_ref().ok_or(gst::FlowError::Error)?;
-        let mut index = current_index;
-        match buffer.pts() {
-            Some(pts) => {
-                let pts = pts + initial_info.gst_time;
-                index = state
-                    .instance
-                    .timestamp_to_index(pts.nseconds(), &state.grain_rate)
-                    .map_err(|_| gst::FlowError::Error)?
-                    + initial_info.index;
-
-                trace!(
-                    "PTS {:?} mapped to grain index {}, current index is {} and running time is {} delta= {}",
-                    pts,
-                    index,
-                    current_index,
-                    gst_time,
-                    if pts > gst_time {pts - gst_time} else {ClockTime::from_mseconds(0)}
-                );
-                if index > current_index {
-                    if index - current_index > state.grain_count as u64 {
-                        index = current_index + state.grain_count as u64 - 1;
-                    }
-                }
-                state.grain_index = index;
-            }
-            None => {
-                state.grain_index = current_index;
-            }
+        if state.video.is_some() {
+            render_video(self, state, buffer)
+        } else {
+            render_audio(self, state, buffer)
         }
-
-        let writer = match &mut state.writer {
-            Some(w) => w,
-            None => {
-                gst::error!(CAT, "No writer available");
-                return Err(gst::FlowError::Error);
-            }
-        };
-
-        let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-        let data = map.as_slice();
-
-        let mut access = writer
-            .open_grain(index)
-            .map_err(|_| gst::FlowError::Error)?;
-
-        let payload = access.payload_mut();
-        let copy_len = std::cmp::min(payload.len(), data.len());
-
-        let commit_time = Instant::now();
-        payload[..copy_len].copy_from_slice(&data[..copy_len]);
-        access
-            .commit(copy_len as u32)
-            .map_err(|_| gst::FlowError::Error)?;
-        trace!(
-            "Commit time: {}us of grain: {}",
-            commit_time.elapsed().as_micros(),
-            index
-        );
-        state.grain_index += 1;
-        trace!("END RENDER");
-        Ok(gst::FlowSuccess::Ok)
     }
 
     fn prepare(&self, buffer: &gst::Buffer) -> Result<gst::FlowSuccess, gst::FlowError> {
@@ -458,104 +426,164 @@ impl BaseSinkImpl for MxlSink {
         let structure = caps
             .structure(0)
             .ok_or_else(|| gst::loggable_error!(CAT, "No structure in caps {}", caps))?;
+        let name = structure.name();
+        if name == "audio/x-raw" {
+            let info = gst_audio::AudioInfo::from_caps(caps)
+                .map_err(|e| gst::loggable_error!(CAT, "Invalid audio caps: {}", e))?;
 
-        let format = structure
-            .get::<String>("format")
-            .unwrap_or_else(|_| "v210".to_string());
-        let width = structure.get::<i32>("width").unwrap_or(1920);
-        let height = structure.get::<i32>("height").unwrap_or(1080);
-        let framerate = structure
-            .get::<gst::Fraction>("framerate")
-            .unwrap_or_else(|_| gst::Fraction::new(30000, 1001));
-        let interlace_mode = structure
-            .get::<String>("interlace-mode")
-            .unwrap_or_else(|_| "progressive".to_string());
-        let colorimetry = structure
-            .get::<String>("colorimetry")
-            .unwrap_or_else(|_| "BT709".to_string());
-        let flow_id = &settings.flow_id;
-        let flow_def = FlowDef {
-            copyright:
-                "SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project."
-                    .into(),
-            license: "SPDX-License-Identifier: Apache-2.0".into(),
-            description: format!(
-                "MXL Test Flow, 1080p{}",
-                framerate.numer() / framerate.denom()
-            )
-            .into(),
-            id: flow_id.deref().into(),
-            tags: HashMap::new(),
-            format: "urn:x-nmos:format:video".into(),
-            label: format!(
-                "MXL Test Flow, 1080p{}",
-                framerate.numer() / framerate.denom()
-            )
-            .into(),
-            parents: vec![],
-            media_type: format!("video/{}", format).into(),
-            grain_rate: GrainRate {
-                numerator: framerate.numer(),
-                denominator: framerate.denom(),
-            },
-            frame_width: width,
-            frame_height: height,
-            interlace_mode: interlace_mode,
-            colorspace: colorimetry,
-            components: vec![
-                Component {
-                    name: "Y".into(),
-                    width: width,
-                    height: height,
-                    bit_depth: 10,
+            let channels = info.channels() as i32;
+            let rate = info.rate() as i32;
+            let bit_depth = info.depth() as u8;
+            let format = info.format().to_string();
+            let flow_id = &settings.flow_id;
+
+            let flow_def = AudioFlowDef {
+                copyright:
+                    "SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project."
+                        .into(),
+                license: "SPDX-License-Identifier: Apache-2.0".into(),
+                description: "MXL Audio Flow".into(),
+                format: "urn:x-nmos:format:audio".into(),
+                tags: [].into(),
+                label: "MXL Audio Flow".into(),
+                id: flow_id.deref().into(),
+                media_type: format!("audio/float32" /*format*/,),
+                sample_rate: SampleRate { numerator: rate },
+                channel_count: channels,
+                bit_depth: bit_depth as u8,
+                parents: vec![],
+            };
+            let instance = &state.instance;
+            let flow = instance
+                .create_flow(
+                    serde_json::to_string(&flow_def)
+                        .map_err(|e| gst::loggable_error!(CAT, "Failed to convert: {}", e))?
+                        .as_str(),
+                    None,
+                )
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to create audio flow: {}", e))?;
+
+            let writer = instance
+                .create_flow_writer(flow_id.as_str())
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow writer: {}", e))?
+                .to_samples_writer()
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to create grain writer: {}", e))?;
+            state.audio = Some(AudioState {
+                writer: writer,
+                bit_depth,
+            });
+            state.flow = Some(flow);
+
+            trace!(
+                "Made it to the end of set_caps with format {}, channel_count {}, sample_rate {}, bit_depth {}",
+                format,
+                channels,
+                rate,
+                bit_depth
+            );
+            return Ok(());
+        } else {
+            let format = structure
+                .get::<String>("format")
+                .unwrap_or_else(|_| "v210".to_string());
+            let width = structure.get::<i32>("width").unwrap_or(1920);
+            let height = structure.get::<i32>("height").unwrap_or(1080);
+            let framerate = structure
+                .get::<gst::Fraction>("framerate")
+                .unwrap_or_else(|_| gst::Fraction::new(30000, 1001));
+            let interlace_mode = structure
+                .get::<String>("interlace-mode")
+                .unwrap_or_else(|_| "progressive".to_string());
+            let colorimetry = structure
+                .get::<String>("colorimetry")
+                .unwrap_or_else(|_| "BT709".to_string());
+            let flow_id = &settings.flow_id;
+            let flow_def = FlowDef {
+                copyright:
+                    "SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project."
+                        .into(),
+                license: "SPDX-License-Identifier: Apache-2.0".into(),
+                description: format!(
+                    "MXL Test Flow, 1080p{}",
+                    framerate.numer() / framerate.denom()
+                )
+                .into(),
+                id: flow_id.deref().into(),
+                tags: HashMap::new(),
+                format: "urn:x-nmos:format:video".into(),
+                label: format!(
+                    "MXL Test Flow, 1080p{}",
+                    framerate.numer() / framerate.denom()
+                )
+                .into(),
+                parents: vec![],
+                media_type: format!("video/{}", format).into(),
+                grain_rate: GrainRate {
+                    numerator: framerate.numer(),
+                    denominator: framerate.denom(),
                 },
-                Component {
-                    name: "Cb".into(),
-                    width: width / 2,
-                    height: height,
-                    bit_depth: 10,
-                },
-                Component {
-                    name: "Cr".into(),
-                    width: width / 2,
-                    height: height,
-                    bit_depth: 10,
-                },
-            ],
-        };
-        let instance = &state.instance;
-        let flow = instance
-            .create_flow(
-                serde_json::to_string(&flow_def)
-                    .map_err(|e| gst::loggable_error!(CAT, "Failed to convert: {}", e))?
-                    .as_str(),
-                None,
-            )
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow: {}", e))?;
-        let grain_rate = flow
-            .discrete_flow_info()
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain rate: {}", e))?
-            .grainRate;
-        let grain_count = flow
-            .discrete_flow_info()
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain count: {}", e))?
-            .grainCount;
-        let writer = instance
-            .create_flow_writer(flow_id.as_str())
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow writer: {}", e))?
-            .to_grain_writer()
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to create grain writer: {}", e))?;
-        let rate = flow
-            .discrete_flow_info()
-            .map_err(|_| gst::loggable_error!(CAT, "Failed to get instance: is None"))?
-            .grainRate;
-        let index = instance.get_current_index(&rate);
-        state.writer = Some(writer);
-        state.grain_index = index;
-        state.flow = Some(flow);
-        state.grain_rate = grain_rate;
-        state.grain_count = grain_count;
-        Ok(())
+                frame_width: width,
+                frame_height: height,
+                interlace_mode: interlace_mode,
+                colorspace: colorimetry,
+                components: vec![
+                    Component {
+                        name: "Y".into(),
+                        width: width,
+                        height: height,
+                        bit_depth: 10,
+                    },
+                    Component {
+                        name: "Cb".into(),
+                        width: width / 2,
+                        height: height,
+                        bit_depth: 10,
+                    },
+                    Component {
+                        name: "Cr".into(),
+                        width: width / 2,
+                        height: height,
+                        bit_depth: 10,
+                    },
+                ],
+            };
+            let instance = &state.instance;
+            let flow = instance
+                .create_flow(
+                    serde_json::to_string(&flow_def)
+                        .map_err(|e| gst::loggable_error!(CAT, "Failed to convert: {}", e))?
+                        .as_str(),
+                    None,
+                )
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow: {}", e))?;
+            let grain_rate = flow
+                .discrete_flow_info()
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain rate: {}", e))?
+                .grainRate;
+            let grain_count = flow
+                .discrete_flow_info()
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain count: {}", e))?
+                .grainCount;
+            let writer = instance
+                .create_flow_writer(flow_id.as_str())
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow writer: {}", e))?
+                .to_grain_writer()
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to create grain writer: {}", e))?;
+            let rate = flow
+                .discrete_flow_info()
+                .map_err(|_| gst::loggable_error!(CAT, "Failed to get instance: is None"))?
+                .grainRate;
+            let index = instance.get_current_index(&rate);
+            state.video = Some(VideoState {
+                writer: writer,
+                grain_index: index,
+                grain_rate,
+                grain_count,
+            });
+            state.flow = Some(flow);
+
+            Ok(())
+        }
     }
 
     fn fixate(&self, caps: gst::Caps) -> gst::Caps {
@@ -610,6 +638,234 @@ fn init_mxl_instance(
     Ok(mxl_instance)
 }
 
+fn render_video(
+    mxlsink: &mxlsink::imp::MxlSink,
+    state: &mut mxlsink::imp::State,
+    buffer: &gst::Buffer,
+) -> Result<gst::FlowSuccess, gst::FlowError> {
+    let current_index = state.instance.get_current_index(
+        &state
+            .flow
+            .as_ref()
+            .ok_or(gst::FlowError::Error)?
+            .discrete_flow_info()
+            .map_err(|_| gst::FlowError::Error)?
+            .grainRate,
+    );
+    let video_state = state.video.as_mut().ok_or(gst::FlowError::Error)?;
+    let gst_time = mxlsink
+        .obj()
+        .current_running_time()
+        .ok_or(gst::FlowError::Error)?;
+    let _ = state.initial_time.get_or_insert_with(|| InitialTime {
+        index: current_index,
+        gst_time: gst_time,
+    });
+    let initial_info = state.initial_time.as_ref().ok_or(gst::FlowError::Error)?;
+    let mut index = current_index;
+    match buffer.pts() {
+        Some(pts) => {
+            let pts = pts + initial_info.gst_time;
+            index = state
+                .instance
+                .timestamp_to_index(pts.nseconds(), &video_state.grain_rate)
+                .map_err(|_| gst::FlowError::Error)?
+                + initial_info.index;
+
+            trace!(
+                    "PTS {:?} mapped to grain index {}, current index is {} and running time is {} delta= {}",
+                    pts,
+                    index,
+                    current_index,
+                    gst_time,
+                    if pts > gst_time {pts - gst_time} else {ClockTime::from_mseconds(0)}
+                );
+            if index > current_index {
+                if index - current_index > video_state.grain_count as u64 {
+                    index = current_index + video_state.grain_count as u64 - 1;
+                }
+            }
+            video_state.grain_index = index;
+        }
+        None => {
+            video_state.grain_index = current_index;
+        }
+    }
+
+    let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+    let data = map.as_slice();
+
+    let mut access = video_state
+        .writer
+        .open_grain(index)
+        .map_err(|_| gst::FlowError::Error)?;
+
+    let payload = access.payload_mut();
+    let copy_len = std::cmp::min(payload.len(), data.len());
+
+    let commit_time = Instant::now();
+    payload[..copy_len].copy_from_slice(&data[..copy_len]);
+    access
+        .commit(copy_len as u32)
+        .map_err(|_| gst::FlowError::Error)?;
+    trace!(
+        "Commit time: {}us of grain: {}",
+        commit_time.elapsed().as_micros(),
+        index
+    );
+    video_state.grain_index += 1;
+    trace!("END RENDER");
+    Ok(gst::FlowSuccess::Ok)
+}
+
+fn render_audio(
+    mxlsink: &mxlsink::imp::MxlSink,
+    state: &mut mxlsink::imp::State,
+    buffer: &gst::Buffer,
+) -> Result<gst::FlowSuccess, gst::FlowError> {
+    let flow = state.flow.as_ref().ok_or(gst::FlowError::Error)?;
+    let flow_info = flow
+        .continuous_flow_info()
+        .map_err(|_| gst::FlowError::Error)?;
+
+    let buffer_len = flow_info.bufferLength;
+    let rate = flow_info.sampleRate;
+    let head_index = state.instance.get_current_index(&rate);
+    let batch_size = (rate.numerator / (100 * rate.denominator)) as u64;
+    trace!("batch size: {}", batch_size);
+    let audio_state = state.audio.as_mut().ok_or(gst::FlowError::Error)?;
+    let gst_time = mxlsink
+        .obj()
+        .current_running_time()
+        .ok_or(gst::FlowError::Error)?;
+    let _ = state.initial_time.get_or_insert_with(|| InitialTime {
+        index: head_index,
+        gst_time: gst_time,
+    });
+    let initial_info = state.initial_time.as_ref().ok_or(gst::FlowError::Error)?;
+    let mut index = head_index;
+    match buffer.pts() {
+        Some(pts) => {
+            let pts = pts + initial_info.gst_time;
+            index = state
+                .instance
+                .timestamp_to_index(pts.nseconds(), &rate)
+                .map_err(|_| gst::FlowError::Error)?
+                + initial_info.index;
+
+            trace!(
+                    "PTS {:?} mapped to grain index {}, current index is {} and running time is {} delta= {}",
+                    pts,
+                    index,
+                    head_index,
+                    gst_time,
+                    if pts > gst_time {pts - gst_time} else {ClockTime::from_mseconds(0)}
+                );
+            if index > head_index {
+                if index - head_index > buffer_len as u64 {
+                    index = head_index + buffer_len as u64 - 1;
+                }
+            }
+        }
+        None => {
+            index = head_index;
+        }
+    }
+    // let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+    // let src = map.as_slice();
+
+    // let num_channels = flow_info.channelCount as usize;
+    // let bit_depth = audio_state.bit_depth as usize;
+    // let bytes_per_sample = bit_depth / 8;
+
+    // let samples_per_channel = src.len() / (num_channels * bytes_per_sample);
+
+    let mut access = audio_state
+        .writer
+        .open_samples(index, batch_size as usize)
+        .map_err(|_| gst::FlowError::Error)?;
+    let samples_index = state.instance.get_current_index(&rate);
+    let mut writing_sample_index = samples_index - batch_size as u64 + 1;
+    for channel in 0..access.channels() {
+        let (data_1, data_2) = access
+            .channel_data_mut(channel)
+            .map_err(|_| gst::FlowError::Error)?;
+        for i in 0..data_1.len() {
+            data_1[i] = (writing_sample_index % 256) as u8;
+            writing_sample_index += 1;
+        }
+        for i in 0..data_2.len() {
+            data_2[i] = (writing_sample_index % 256) as u8;
+            writing_sample_index += 1;
+        }
+    }
+    // for i in 0..samples_per_channel {
+    //     for ch in 0..channel_count {
+    //         let src_offset = (i * channel_count as usize + ch as usize) * bytes_per_sample;
+    //         let buf_offset = i * bytes_per_sample;
+
+    //         let (plane0, plane1) = access
+    //             .channel_data_mut(ch as usize)
+    //             .map_err(|_| gst::FlowError::Error)?;
+
+    //         let end = buf_offset + bytes_per_sample;
+
+    //         if end <= plane0.len() {
+    //             plane0[buf_offset..end]
+    //                 .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
+    //         } else {
+    //             let first_part = plane0.len().saturating_sub(buf_offset);
+    //             if first_part > 0 {
+    //                 plane0[buf_offset..].copy_from_slice(&src[src_offset..src_offset + first_part]);
+    //             }
+
+    //             let second_part = bytes_per_sample - first_part;
+    //             if second_part > 0 && plane1.len() >= second_part {
+    //                 plane1[0..second_part].copy_from_slice(
+    //                     &src[src_offset + first_part..src_offset + bytes_per_sample],
+    //                 );
+    //             } else if second_part > 0 {
+    //                 gst::warning!(
+    //                     CAT,
+    //                     "Audio wrap write exceeds plane1 length ({} > {})",
+    //                     second_part,
+    //                     plane1.len()
+    //                 );
+    //             }
+    //         }
+    //     }
+    // }
+    // for i in 0..samples_per_channel {
+    //     for ch in 0..channel_count {
+    //         let src_offset = (i * channel_count as usize + ch as usize) * bytes_per_sample;
+    //         let buf_offset = i * bytes_per_sample;
+    //         let (plane0, plane1) = access
+    //             .channel_data_mut(ch as usize)
+    //             .map_err(|_| gst::FlowError::Error)?;
+
+    //         if buf_offset + bytes_per_sample <= plane0.len() {
+    //             plane0[buf_offset..buf_offset + bytes_per_sample]
+    //                 .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
+    //             if plane1.len() >= buf_offset + bytes_per_sample {
+    //                 plane1[buf_offset..buf_offset + bytes_per_sample]
+    //                     .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
+    //             }
+    //         } else {
+    //             gst::warning!(
+    //                 CAT,
+    //                 "Audio write out of bounds: buf_offset={}, plane0.len={}",
+    //                 buf_offset,
+    //                 plane0.len()
+    //             );
+    //         }
+    //     }
+    // }
+
+    access.commit().map_err(|_| gst::FlowError::Error)?;
+    trace!("END RENDER");
+    Ok(gst::FlowSuccess::Ok)
+}
+
 #[cfg(test)]
 mod tests {
     use gst::{CoreError, Fraction};
@@ -626,7 +882,11 @@ mod tests {
         let interlace_mode = "progressive".to_string();
         let colorimetry = "BT709".to_string();
         let format = "v210".to_string();
-
+        let mut tags = HashMap::new();
+        tags.insert(
+            "urn:x-nmos:tag:grouphint/v1.0".to_string(),
+            vec!["Media Function XYZ:Audio".to_string()],
+        );
         let flow_def = FlowDef {
             copyright:
                 "SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project."
@@ -638,7 +898,7 @@ mod tests {
             )
             .into(),
             id: flow_id.to_string(),
-            tags: HashMap::new(),
+            tags: tags,
             format: "urn:x-nmos:format:video".into(),
             label: format!(
                 "MXL Test Flow, 1080p{}",
@@ -995,6 +1255,74 @@ mod tests {
         pipeline
             .set_state(gst::State::Null)
             .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    fn valid_audio_pipeline() -> Result<(), glib::Error> {
+        use gst::{prelude::*, CoreError};
+
+        gst::init()?;
+        gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let pipeline = gst::Pipeline::new();
+        let src = gst::ElementFactory::make("audiotestsrc")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let convert = gst::ElementFactory::make("audioconvert")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let resample = gst::ElementFactory::make("audioresample")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let sink = gst::ElementFactory::make("mxlsink")
+            .property("flow-id", "8fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("domain", "/mnt/mxl/domain_2")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        let caps = gst::Caps::builder("audio/x-raw")
+            .field("format", "F32LE")
+            .field("rate", 44100)
+            .field("channels", 1)
+            .build();
+
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property("caps", &caps)
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        pipeline
+            .add_many(&[&src, &convert, &resample, &capsfilter, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        gst::Element::link_many([&src, &convert, &resample, &capsfilter, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+
+        std::thread::sleep(std::time::Duration::from_millis(3000));
+
+        let src_pad = src
+            .static_pad("src")
+            .ok_or_else(|| glib::Error::new(CoreError::Failed, "Failed to get source pad"))?;
+
+        if let Some(caps) = src_pad.current_caps() {
+            println!("Negotiated caps: {}", caps.to_string());
+        } else {
+            println!("No negotiated caps found");
+        }
+
+        pipeline
+            .set_state(gst::State::Null)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+
         Ok(())
     }
 }
