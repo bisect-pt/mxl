@@ -718,151 +718,296 @@ fn render_video(
     Ok(gst::FlowSuccess::Ok)
 }
 
+// fn render_audio(
+//     mxlsink: &mxlsink::imp::MxlSink,
+//     state: &mut mxlsink::imp::State,
+//     buffer: &gst::Buffer,
+// ) -> Result<gst::FlowSuccess, gst::FlowError> {
+//     let flow = state.flow.as_ref().ok_or(gst::FlowError::Error)?;
+//     let flow_info = flow
+//         .continuous_flow_info()
+//         .map_err(|_| gst::FlowError::Error)?;
+
+//     let buffer_len = flow_info.bufferLength;
+//     let rate = flow_info.sampleRate;
+//     let head_index = state.instance.get_current_index(&rate);
+//     let batch_size = (rate.numerator / (100 * rate.denominator)) as u64;
+//     trace!("batch size: {}", batch_size);
+//     let audio_state = state.audio.as_mut().ok_or(gst::FlowError::Error)?;
+//     let gst_time = mxlsink
+//         .obj()
+//         .current_running_time()
+//         .ok_or(gst::FlowError::Error)?;
+//     let _ = state.initial_time.get_or_insert_with(|| InitialTime {
+//         index: head_index,
+//         gst_time: gst_time,
+//     });
+//     let initial_info = state.initial_time.as_ref().ok_or(gst::FlowError::Error)?;
+//     let mut index = head_index;
+//     match buffer.pts() {
+//         Some(pts) => {
+//             let pts = pts + initial_info.gst_time;
+//             index = state
+//                 .instance
+//                 .timestamp_to_index(pts.nseconds(), &rate)
+//                 .map_err(|_| gst::FlowError::Error)?
+//                 + initial_info.index;
+
+//             trace!(
+//                     "PTS {:?} mapped to grain index {}, current index is {} and running time is {} delta= {}",
+//                     pts,
+//                     index,
+//                     head_index,
+//                     gst_time,
+//                     if pts > gst_time {pts - gst_time} else {ClockTime::from_mseconds(0)}
+//                 );
+//             if index > head_index {
+//                 if index - head_index > buffer_len as u64 {
+//                     index = head_index + buffer_len as u64 - 1;
+//                 }
+//             }
+//         }
+//         None => {
+//             index = head_index;
+//         }
+//     }
+//     // let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+//     // let src = map.as_slice();
+
+//     // let num_channels = flow_info.channelCount as usize;
+//     // let bit_depth = audio_state.bit_depth as usize;
+//     // let bytes_per_sample = bit_depth / 8;
+
+//     // let samples_per_channel = src.len() / (num_channels * bytes_per_sample);
+
+//     // let mut access = audio_state
+//     //     .writer
+//     //     .open_samples(index, batch_size as usize)
+//     //     .map_err(|_| gst::FlowError::Error)?;
+//     //let samples_index = state.instance.get_current_index(&rate);
+//     //let mut writing_sample_index = samples_index - batch_size as u64 + 1;
+//     // for channel in 0..access.channels() {
+//     //     let (data_1, data_2) = access
+//     //         .channel_data_mut(channel)
+//     //         .map_err(|_| gst::FlowError::Error)?;
+//     //     for i in 0..data_1.len() {
+//     //         data_1[i] = (writing_sample_index % 256) as u8;
+//     //         writing_sample_index += 1;
+//     //     }
+//     //     for i in 0..data_2.len() {
+//     //         data_2[i] = (writing_sample_index % 256) as u8;
+//     //         writing_sample_index += 1;
+//     //     }
+//     // }
+
+//     // for i in 0..samples_per_channel {
+//     //     for ch in 0..access.channels() {
+//     //         let src_offset = (i * access.channels() + ch as usize) * bytes_per_sample;
+//     //         let buf_offset = i * bytes_per_sample;
+
+//     //         let (plane0, plane1) = access
+//     //             .channel_data_mut(ch as usize)
+//     //             .map_err(|_| gst::FlowError::Error)?;
+
+//     //         let end = buf_offset + bytes_per_sample;
+
+//     //         if end <= plane0.len() {
+//     //             plane0[buf_offset..end]
+//     //                 .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
+//     //         } else {
+//     //             let first_part = plane0.len().saturating_sub(buf_offset);
+//     //             if first_part > 0 {
+//     //                 plane0[buf_offset..].copy_from_slice(&src[src_offset..src_offset + first_part]);
+//     //             }
+
+//     //             let second_part = bytes_per_sample - first_part;
+//     //             if second_part > 0 && plane1.len() >= second_part {
+//     //                 plane1[0..second_part].copy_from_slice(
+//     //                     &src[src_offset + first_part..src_offset + bytes_per_sample],
+//     //                 );
+//     //             } else if second_part > 0 {
+//     //                 gst::warning!(
+//     //                     CAT,
+//     //                     "Audio wrap write exceeds plane1 length ({} > {})",
+//     //                     second_part,
+//     //                     plane1.len()
+//     //                 );
+//     //             }
+//     //         }
+//     //     }
+//     // }
+//     // for i in 0..samples_per_channel {
+//     //     for ch in 0..access.channels() {
+//     //         let src_offset = (i * access.channels() as usize + ch as usize) * bytes_per_sample;
+//     //         let buf_offset = i * bytes_per_sample;
+//     //         let (plane0, plane1) = access
+//     //             .channel_data_mut(ch as usize)
+//     //             .map_err(|_| gst::FlowError::Error)?;
+
+//     //         if buf_offset + bytes_per_sample <= plane0.len() {
+//     //             plane0[buf_offset..buf_offset + bytes_per_sample]
+//     //                 .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
+//     //             if plane1.len() >= buf_offset + bytes_per_sample {
+//     //                 plane1[buf_offset..buf_offset + bytes_per_sample]
+//     //                     .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
+//     //             }
+//     //         } else {
+//     //             gst::warning!(
+//     //                 CAT,
+//     //                 "Audio write out of bounds: buf_offset={}, plane0.len={}",
+//     //                 buf_offset,
+//     //                 plane0.len()
+//     //             );
+//     //         }
+//     //     }
+//     // }
+//     let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+//     let src = map.as_slice();
+//     let samples_index = state.instance.get_current_index(&rate);
+//     let mut samples_write_access = audio_state
+//         .writer
+//         .open_samples(samples_index, batch_size as usize)
+//         .map_err(|_| gst::FlowError::Error)?;
+//     for channel in 0..samples_write_access.channels() {
+//         let (data_1, data_2) = samples_write_access
+//             .channel_data_mut(channel)
+//             .map_err(|_| gst::FlowError::Error)?;
+
+//         let mut offset = 0;
+
+//         let len1 = data_1.len().min(src.len().saturating_sub(offset));
+//         data_1[..len1].copy_from_slice(&src[offset..offset + len1]);
+//         offset += len1;
+
+//         if offset < src.len() {
+//             let len2 = data_2.len().min(src.len() - offset);
+//             data_2[..len2].copy_from_slice(&src[offset..offset + len2]);
+//             offset += len2;
+//         }
+//     }
+
+//     samples_write_access
+//         .commit()
+//         .map_err(|_| gst::FlowError::Error)?;
+//     trace!("END RENDER");
+//     Ok(gst::FlowSuccess::Ok)
+// }
+
 fn render_audio(
     mxlsink: &mxlsink::imp::MxlSink,
     state: &mut mxlsink::imp::State,
     buffer: &gst::Buffer,
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
+    use std::time::Instant;
+    use tracing::{trace, warn};
+
     let flow = state.flow.as_ref().ok_or(gst::FlowError::Error)?;
     let flow_info = flow
         .continuous_flow_info()
         .map_err(|_| gst::FlowError::Error)?;
 
-    let buffer_len = flow_info.bufferLength;
-    let rate = flow_info.sampleRate;
-    let head_index = state.instance.get_current_index(&rate);
-    let batch_size = (rate.numerator / (100 * rate.denominator)) as u64;
-    trace!("batch size: {}", batch_size);
-    let audio_state = state.audio.as_mut().ok_or(gst::FlowError::Error)?;
+    let sample_rate = flow_info.sampleRate;
+    let writer_batch_size = flow_info.commitBatchSize as usize;
+    let buffer_length = flow_info.bufferLength as u64;
+
+    let batch_size = if writer_batch_size == 0 {
+        let fallback = (sample_rate.numerator / (100 * sample_rate.denominator)) as usize;
+        warn!(
+            "Writer batch size not defined; using fallback of {} samples.",
+            fallback
+        );
+        fallback
+    } else {
+        writer_batch_size
+    };
+    let batch_size = 1024;
+
+    let current_index = state.instance.get_current_index(&sample_rate);
     let gst_time = mxlsink
         .obj()
         .current_running_time()
         .ok_or(gst::FlowError::Error)?;
-    let _ = state.initial_time.get_or_insert_with(|| InitialTime {
-        index: head_index,
-        gst_time: gst_time,
-    });
-    let initial_info = state.initial_time.as_ref().ok_or(gst::FlowError::Error)?;
-    let mut index = head_index;
-    match buffer.pts() {
-        Some(pts) => {
-            let pts = pts + initial_info.gst_time;
-            index = state
-                .instance
-                .timestamp_to_index(pts.nseconds(), &rate)
-                .map_err(|_| gst::FlowError::Error)?
-                + initial_info.index;
 
-            trace!(
-                    "PTS {:?} mapped to grain index {}, current index is {} and running time is {} delta= {}",
-                    pts,
-                    index,
-                    head_index,
-                    gst_time,
-                    if pts > gst_time {pts - gst_time} else {ClockTime::from_mseconds(0)}
-                );
-            if index > head_index {
-                if index - head_index > buffer_len as u64 {
-                    index = head_index + buffer_len as u64 - 1;
-                }
-            }
-        }
-        None => {
-            index = head_index;
+    let _ = state
+        .initial_time
+        .get_or_insert_with(|| mxlsink::imp::InitialTime {
+            index: current_index,
+            gst_time,
+        });
+    let initial_info = state.initial_time.as_ref().ok_or(gst::FlowError::Error)?;
+
+    let mut write_index = current_index;
+    if let Some(pts) = buffer.pts() {
+        let abs_pts = pts + initial_info.gst_time;
+        write_index = state
+            .instance
+            .timestamp_to_index(abs_pts.nseconds(), &sample_rate)
+            .map_err(|_| gst::FlowError::Error)?
+            + initial_info.index;
+
+        if write_index > current_index + buffer_length {
+            write_index = current_index + buffer_length - 1;
         }
     }
-    // let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
-    // let src = map.as_slice();
 
-    // let num_channels = flow_info.channelCount as usize;
-    // let bit_depth = audio_state.bit_depth as usize;
-    // let bytes_per_sample = bit_depth / 8;
+    trace!(
+        "Writing audio batch at index {}, sample_rate {}/{}",
+        write_index,
+        sample_rate.numerator,
+        sample_rate.denominator
+    );
 
-    // let samples_per_channel = src.len() / (num_channels * bytes_per_sample);
+    let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+    let src = map.as_slice();
 
+    let audio_state = state.audio.as_mut().ok_or(gst::FlowError::Error)?;
     let mut access = audio_state
         .writer
-        .open_samples(index, batch_size as usize)
+        .open_samples(write_index, batch_size)
         .map_err(|_| gst::FlowError::Error)?;
-    let samples_index = state.instance.get_current_index(&rate);
-    let mut writing_sample_index = samples_index - batch_size as u64 + 1;
-    for channel in 0..access.channels() {
-        let (data_1, data_2) = access
-            .channel_data_mut(channel)
+
+    let num_channels = access.channels();
+    let bytes_per_sample = (audio_state.bit_depth / 8) as usize;
+    let samples_per_channel = src.len() / (num_channels * bytes_per_sample);
+
+    for ch in 0..num_channels {
+        let (plane1, plane2) = access
+            .channel_data_mut(ch)
             .map_err(|_| gst::FlowError::Error)?;
-        for i in 0..data_1.len() {
-            data_1[i] = (writing_sample_index % 256) as u8;
-            writing_sample_index += 1;
-        }
-        for i in 0..data_2.len() {
-            data_2[i] = (writing_sample_index % 256) as u8;
-            writing_sample_index += 1;
+
+        let mut written = 0;
+        let offset = ch * bytes_per_sample;
+
+        for i in 0..samples_per_channel {
+            let sample_offset = i * num_channels * bytes_per_sample + offset;
+
+            if sample_offset + bytes_per_sample > src.len() {
+                break;
+            }
+
+            if written + bytes_per_sample <= plane1.len() {
+                plane1[written..written + bytes_per_sample]
+                    .copy_from_slice(&src[sample_offset..sample_offset + bytes_per_sample]);
+            } else if written < plane1.len() + plane2.len() {
+                let plane2_offset = written.saturating_sub(plane1.len());
+                if plane2_offset + bytes_per_sample <= plane2.len() {
+                    plane2[plane2_offset..plane2_offset + bytes_per_sample]
+                        .copy_from_slice(&src[sample_offset..sample_offset + bytes_per_sample]);
+                }
+            }
+
+            written += bytes_per_sample;
         }
     }
-    // for i in 0..samples_per_channel {
-    //     for ch in 0..channel_count {
-    //         let src_offset = (i * channel_count as usize + ch as usize) * bytes_per_sample;
-    //         let buf_offset = i * bytes_per_sample;
 
-    //         let (plane0, plane1) = access
-    //             .channel_data_mut(ch as usize)
-    //             .map_err(|_| gst::FlowError::Error)?;
-
-    //         let end = buf_offset + bytes_per_sample;
-
-    //         if end <= plane0.len() {
-    //             plane0[buf_offset..end]
-    //                 .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
-    //         } else {
-    //             let first_part = plane0.len().saturating_sub(buf_offset);
-    //             if first_part > 0 {
-    //                 plane0[buf_offset..].copy_from_slice(&src[src_offset..src_offset + first_part]);
-    //             }
-
-    //             let second_part = bytes_per_sample - first_part;
-    //             if second_part > 0 && plane1.len() >= second_part {
-    //                 plane1[0..second_part].copy_from_slice(
-    //                     &src[src_offset + first_part..src_offset + bytes_per_sample],
-    //                 );
-    //             } else if second_part > 0 {
-    //                 gst::warning!(
-    //                     CAT,
-    //                     "Audio wrap write exceeds plane1 length ({} > {})",
-    //                     second_part,
-    //                     plane1.len()
-    //                 );
-    //             }
-    //         }
-    //     }
-    // }
-    // for i in 0..samples_per_channel {
-    //     for ch in 0..channel_count {
-    //         let src_offset = (i * channel_count as usize + ch as usize) * bytes_per_sample;
-    //         let buf_offset = i * bytes_per_sample;
-    //         let (plane0, plane1) = access
-    //             .channel_data_mut(ch as usize)
-    //             .map_err(|_| gst::FlowError::Error)?;
-
-    //         if buf_offset + bytes_per_sample <= plane0.len() {
-    //             plane0[buf_offset..buf_offset + bytes_per_sample]
-    //                 .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
-    //             if plane1.len() >= buf_offset + bytes_per_sample {
-    //                 plane1[buf_offset..buf_offset + bytes_per_sample]
-    //                     .copy_from_slice(&src[src_offset..src_offset + bytes_per_sample]);
-    //             }
-    //         } else {
-    //             gst::warning!(
-    //                 CAT,
-    //                 "Audio write out of bounds: buf_offset={}, plane0.len={}",
-    //                 buf_offset,
-    //                 plane0.len()
-    //             );
-    //         }
-    //     }
-    // }
-
+    let commit_start = Instant::now();
     access.commit().map_err(|_| gst::FlowError::Error)?;
-    trace!("END RENDER");
+    trace!(
+        "Committed audio batch at index {} (took {} µs)",
+        write_index,
+        commit_start.elapsed().as_micros()
+    );
+
     Ok(gst::FlowSuccess::Ok)
 }
 
@@ -1282,7 +1427,7 @@ mod tests {
 
         let sink = gst::ElementFactory::make("mxlsink")
             .property("flow-id", "8fbec3b1-1b0f-417d-9059-8b94a47197ed")
-            .property("domain", "/mnt/mxl/domain_2")
+            .property("domain", "/mnt/mxl/domain_1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
         let caps = gst::Caps::builder("audio/x-raw")

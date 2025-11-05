@@ -21,6 +21,7 @@ use mxl::GrainReader;
 use mxl::MxlFlowReader;
 use mxl::MxlInstance;
 use mxl::Rational;
+use mxl::SamplesReader;
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::trace;
@@ -87,7 +88,10 @@ struct VideoState {
 }
 
 struct AudioState {
-    reader: MxlFlowReader, // will be used when create() is fully implemented for audio
+    reader: MxlFlowReader,
+    samples_reader: SamplesReader,
+    batch_counter: u64,
+    is_initialized: bool,
 }
 
 #[derive(Default)]
@@ -575,11 +579,23 @@ impl BaseSrcImpl for MxlSrc {
                 audio: None,
             });
         } else if settings.audio_flow.is_some() {
+            let reader_audio = init_mxl_reader(&settings)?;
+            let samples_reader = reader_audio.to_samples_reader().map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to initialize MXL grain reader: {}", e]
+                )
+            })?;
             context.state = Some(State {
                 instance,
                 initial_info,
                 video: None,
-                audio: Some(AudioState { reader }),
+                audio: Some(AudioState {
+                    reader,
+                    samples_reader,
+                    batch_counter: 0,
+                    is_initialized: false,
+                }),
             })
         }
 
@@ -837,14 +853,117 @@ impl PushSrcImpl for MxlSrc {
             }
             Ok(CreateSuccess::NewBuffer(buffer))
         } else if state.audio.is_some() {
-            let mut buffer = gst::Buffer::with_size(1024 * 4).unwrap();
+            let audio_state = state.audio.as_mut().ok_or(gst::FlowError::Error)?;
+            let reader_info = audio_state
+                .reader
+                .get_info()
+                .map_err(|_| gst::FlowError::Error)?;
+            let reader_info_cont = reader_info
+                .continuous_flow_info()
+                .map_err(|_| gst::FlowError::Error)?;
+            let sample_rate = reader_info_cont.sampleRate;
+            // let batch_size = (sample_rate.numerator / (100 * sample_rate.denominator)) as usize;
+            let batch_size = 1024; //hardcode for tests
+            let Some(ts_gst) = self.obj().current_running_time() else {
+                return Err(gst::FlowError::Error);
+            };
+            if !audio_state.is_initialized {
+                state.initial_info = InitialTime {
+                    mxl_index: state.instance.get_time(),
+                    gst_time: ts_gst,
+                };
+                audio_state.is_initialized = true;
+            }
+
+            let samples = audio_state
+                .samples_reader
+                .get_samples(reader_info_cont.headIndex, batch_size)
+                .map_err(|_| gst::FlowError::Error)?;
+            let mut all_channels_data = Vec::new();
+            for ch in 0..samples.num_of_channels() {
+                let (data1, data2) = samples
+                    .channel_data(ch)
+                    .map_err(|_| gst::FlowError::Error)?;
+                all_channels_data.extend_from_slice(data1);
+                all_channels_data.extend_from_slice(data2);
+            }
+            let next_index = reader_info_cont.headIndex + batch_size as u64;
+            let next_head_timestamp = state
+                .instance
+                .index_to_timestamp(next_index, &sample_rate)
+                .map_err(|_| gst::FlowError::Error)?;
+            let read_head_timestamp = state
+                .instance
+                .index_to_timestamp(reader_info_cont.headIndex, &sample_rate)
+                .map_err(|_| gst::FlowError::Error)?;
+            let read_batch_duration = next_head_timestamp - read_head_timestamp;
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            state.initial_info.mxl_index += read_batch_duration;
+            let sleep_duration = Duration::from_nanos(
+                state
+                    .initial_info
+                    .mxl_index
+                    .saturating_sub(state.instance.get_time()),
+            );
+            trace!("Will sleep for {:?}.", sleep_duration);
+            state.instance.sleep_for(sleep_duration);
+            if std::time::Instant::now() >= deadline {
+                trace!(
+                    "Timeout while waiting for samples at index {}.",
+                    reader_info_cont.headIndex
+                );
+                return Err(gst::FlowError::Error);
+            }
+
+            // let Some(ts_gst) = self.obj().current_running_time() else {
+            //     return Err(gst::FlowError::Error);
+            // };
+            // if !audio_state.is_initialized {
+            //     let current_index = state.instance.get_current_index(&sample_rate);
+            //     state.initial_info = InitialTime {
+            //         mxl_index: current_index,
+            //         gst_time: ts_gst,
+            //     };
+            //     audio_state.is_initialized = true;
+            // }
+
+            let batch_duration_ns = (batch_size as u128 * 1_000_000_000u128)
+                * sample_rate.denominator as u128
+                / sample_rate.numerator as u128;
+
+            let pts_ns = gst::ClockTime::from_nseconds(
+                (audio_state.batch_counter as u128 * batch_duration_ns) as u64,
+            );
+            let mut pts = state.initial_info.gst_time + pts_ns;
+            let mut buf_size = 0;
+            if samples.num_of_channels() > 0 {
+                let channel_data = samples.channel_data(0).map_err(|_| gst::FlowError::Error)?;
+                trace!(
+                    "Buffer size for channel 0 is ({}, {}).",
+                    channel_data.0.len(),
+                    channel_data.1.len()
+                );
+                buf_size = channel_data.0.len() + channel_data.1.len();
+            }
+            let mut buffer = gst::Buffer::with_size(buf_size).map_err(|_| gst::FlowError::Error)?; //placeholder
+            pts = pts + gst::ClockTime::from_seconds(sleep_duration.as_secs());
+            if pts < ts_gst {
+                state.initial_info.gst_time += ts_gst - pts;
+                pts = ts_gst;
+            }
             {
                 let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
-                let mut map = buffer.map_writable().unwrap();
-                for (i, b) in map.as_mut_slice().iter_mut().enumerate() {
-                    *b = ((i / 4) % 256) as u8;
-                }
+                buffer.set_pts(pts);
+                let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
+                map.as_mut_slice().copy_from_slice(&all_channels_data);
             }
+            audio_state.batch_counter += 1;
+            trace!(
+                "Initial time: {} buffer PTS: {:?} gst running time: {}",
+                state.initial_info.gst_time,
+                buffer.pts(),
+                ts_gst
+            );
             Ok(CreateSuccess::NewBuffer(buffer))
         } else {
             Err(gst::FlowError::Error)
