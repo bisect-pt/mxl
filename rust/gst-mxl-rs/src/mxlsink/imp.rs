@@ -297,12 +297,17 @@ impl ElementImpl for MxlSink {
                         .field("format", "v210")
                         .build(),
                 );
-                caps_mut.append(
-                    gst::Caps::builder("audio/x-raw")
-                        .field("format", "F32LE")
-                        .field("layout", "non-interleaved")
-                        .build(),
-                );
+                for ch in 1..64 {
+                    let mask = gst::Bitmask::from((1u64 << ch) - 1);
+                    caps.make_mut().append(
+                        gst::Caps::builder("audio/x-raw")
+                            .field("format", "F32LE")
+                            .field("layout", "interleaved")
+                            .field("channels", ch)
+                            .field("channel-mask", mask)
+                            .build(),
+                    );
+                }
             }
 
             let sink_pad_template = gst::PadTemplate::new(
@@ -745,24 +750,6 @@ fn render_audio(
     let samples_per_buffer =
         src.len() / (audio_state.flow_def.channel_count as usize * bytes_per_sample);
     audio_state.batch_size = samples_per_buffer;
-
-    // if audio_state.writer.is_none() {
-    //     audio_state.flow_def.commit_batch_size = audio_state.batch_size as u64;
-    //     let flow_def_json =
-    //         serde_json::to_string(&audio_state.flow_def).map_err(|_| gst::FlowError::Error)?;
-    //     let flow = state
-    //         .instance
-    //         .create_flow(&flow_def_json, None)
-    //         .map_err(|_| gst::FlowError::Error)?;
-    //     state.flow = Some(flow);
-    //     let writer = state
-    //         .instance
-    //         .create_flow_writer(audio_state.flow_def.id.as_str())
-    //         .map_err(|_| gst::FlowError::Error)?
-    //         .to_samples_writer()
-    //         .map_err(|_| gst::FlowError::Error)?;
-    //     audio_state.writer = Some(writer);
-    // }
 
     let flow = state.flow.as_ref().ok_or(gst::FlowError::Error)?;
     let flow_info = flow
