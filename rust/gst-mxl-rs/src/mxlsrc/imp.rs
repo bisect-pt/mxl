@@ -432,7 +432,11 @@ impl BaseSrcImpl for MxlSrc {
                         .field("format", "F32LE")
                         .field("rate", json.sample_rate.numerator)
                         .field("channels", json.channel_count)
-                        .field("layout", "non-interleaved")
+                        .field("layout", "interleaved")
+                        .field(
+                            "channel-mask",
+                            generate_channel_mask_from_channels(json.channel_count as u32),
+                        )
                         .build();
                     self.obj()
                         .set_caps(&caps)
@@ -653,6 +657,14 @@ impl BaseSrcImpl for MxlSrc {
 
         Ok(())
     }
+}
+fn generate_channel_mask_from_channels(channels: u32) -> gst::Bitmask {
+    let mask = if channels >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << channels) - 1
+    };
+    gst::Bitmask::new(mask)
 }
 
 fn init_mxl_reader(
@@ -967,15 +979,37 @@ fn create_audio(src: &MxlSrc, state: &mut State) -> Result<CreateSuccess, gst::F
             read_once(audio_state.index).map_err(|_| gst::FlowError::Error)?
         }
     };
+    let num_channels = samples.num_of_channels();
+    let mut channels: Vec<Vec<u8>> = Vec::with_capacity(num_channels);
+    let mut total_samples_per_channel = 0;
 
-    let mut all_channels_data = Vec::new();
-    for ch in 0..samples.num_of_channels() {
+    for ch in 0..num_channels {
         let (data1, data2) = samples
             .channel_data(ch)
             .map_err(|_| gst::FlowError::Error)?;
-        all_channels_data.extend_from_slice(data1);
-        all_channels_data.extend_from_slice(data2);
+        let mut combined = Vec::with_capacity(data1.len() + data2.len());
+        combined.extend_from_slice(data1);
+        combined.extend_from_slice(data2);
+        total_samples_per_channel = combined.len() / std::mem::size_of::<f32>();
+        channels.push(combined);
     }
+    let mut interleaved =
+        Vec::with_capacity(total_samples_per_channel * num_channels * std::mem::size_of::<f32>());
+    for frame in 0..total_samples_per_channel {
+        for ch in 0..num_channels {
+            let chan = &channels[ch];
+            let offset = frame * std::mem::size_of::<f32>();
+            interleaved.extend_from_slice(&chan[offset..offset + std::mem::size_of::<f32>()]);
+        }
+    }
+    // let mut all_channels_data = Vec::new();
+    // for ch in 0..samples.num_of_channels() {
+    //     let (data1, data2) = samples
+    //         .channel_data(ch)
+    //         .map_err(|_| gst::FlowError::Error)?;
+    //     all_channels_data.extend_from_slice(data1);
+    //     all_channels_data.extend_from_slice(data2);
+    // }
 
     let next_index = audio_state.index + batch;
     let next_head_timestamp = state
@@ -1031,7 +1065,7 @@ fn create_audio(src: &MxlSrc, state: &mut State) -> Result<CreateSuccess, gst::F
         }
 
         let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
-        map.as_mut_slice().copy_from_slice(&all_channels_data);
+        map.as_mut_slice().copy_from_slice(&interleaved);
     }
 
     audio_state.batch_counter += 1;
@@ -1178,14 +1212,11 @@ mod tests {
     #[cfg_attr(feature = "trace", tracing_test::traced_test)]
 
     fn start_valid_audio_pipeline() -> Result<(), glib::Error> {
-        // Initialize GStreamer
         gst::init()?;
 
-        // Register your custom plugin if needed
         gst::Element::register(None, "rsmxlsrc", gst::Rank::NONE, MxlSrc::type_())
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        // Create all elements
         let src = ElementFactory::make("rsmxlsrc")
             .property("audio-flow", "8fbec3b1-1b0f-417d-9059-8b94a47197ed")
             .property("domain", "/mnt/mxl/domain_1")
@@ -1193,27 +1224,12 @@ mod tests {
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let capsfilter = ElementFactory::make("capsfilter")
-            .property(
-                "caps",
-                &gst::Caps::builder("audio/x-raw")
-                    .field("channels", 1i32)
-                    .build(),
-            )
+            .property("caps", &gst::Caps::builder("audio/x-raw").build())
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
         let queue0 = ElementFactory::make("queue")
             .name("queue0")
-            .build()
-            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-
-        let interleave = ElementFactory::make("interleave")
-            .name("m")
-            .build()
-            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-
-        let queue1 = ElementFactory::make("queue")
-            .name("queue1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
@@ -1248,8 +1264,6 @@ mod tests {
                 &src,
                 &capsfilter,
                 &queue0,
-                &interleave,
-                &queue1,
                 &audioconvert,
                 &queue2,
                 &volume,
@@ -1258,35 +1272,12 @@ mod tests {
             ])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        // Link elements for the main chain
-        gst::Element::link_many([
-            &interleave,
-            &queue1,
-            &audioconvert,
-            &queue2,
-            &volume,
-            &queue3,
-            &sink,
-        ])
-        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::link_many([&audioconvert, &queue2, &volume, &queue3, &sink])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        // Manually link the source → caps → queue0 → interleave.sink_0
         gst::Element::link_many([&src, &capsfilter, &queue0])
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        let interleave_sink_0 = interleave
-            .request_pad_simple("sink_0")
-            .ok_or_else(|| glib::Error::new(CoreError::Failed, "Failed to get m.sink_0 pad"))?;
-
-        let queue0_src_pad = queue0
-            .static_pad("src")
-            .ok_or_else(|| glib::Error::new(CoreError::Failed, "Missing queue0 src pad"))?;
-
-        queue0_src_pad.link(&interleave_sink_0).map_err(|_| {
-            glib::Error::new(CoreError::Failed, "Failed to link queue0 to interleave")
-        })?;
-
-        // Run the pipeline
         pipeline.set_state(gst::State::Playing).map_err(|_| {
             glib::Error::new(CoreError::Failed, "Failed to set pipeline to Playing")
         })?;
