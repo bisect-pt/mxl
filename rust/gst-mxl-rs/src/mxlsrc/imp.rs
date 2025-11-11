@@ -38,6 +38,7 @@ use std::u128;
 use crate::mxlsrc;
 
 const GET_GRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_BATCH_SIZE: u32 = 48;
 
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
@@ -92,6 +93,8 @@ struct AudioState {
     samples_reader: SamplesReader,
     batch_counter: u64,
     is_initialized: bool,
+    index: u64,
+    next_discont: bool,
 }
 
 #[derive(Default)]
@@ -429,7 +432,7 @@ impl BaseSrcImpl for MxlSrc {
                         .field("format", "F32LE")
                         .field("rate", json.sample_rate.numerator)
                         .field("channels", json.channel_count)
-                        .field("layout", "interleaved")
+                        .field("layout", "non-interleaved")
                         .build();
                     self.obj()
                         .set_caps(&caps)
@@ -595,6 +598,8 @@ impl BaseSrcImpl for MxlSrc {
                     samples_reader,
                     batch_counter: 0,
                     is_initialized: false,
+                    index: 0,
+                    next_discont: false,
                 }),
             })
         }
@@ -719,6 +724,8 @@ impl PushSrcImpl for MxlSrc {
         &self,
         _buffer: Option<&mut gst::BufferRef>,
     ) -> Result<CreateSuccess, gst::FlowError> {
+        let pad_caps = self.obj().static_pad("src").unwrap().current_caps();
+        trace!("src pad current caps: {:?}", pad_caps);
         let mut context = self.context.lock().map_err(|_| gst::FlowError::Error)?;
         let state = context.state.as_mut().ok_or(gst::FlowError::Error)?;
         if state.video.is_some() {
@@ -853,129 +860,198 @@ impl PushSrcImpl for MxlSrc {
             }
             Ok(CreateSuccess::NewBuffer(buffer))
         } else if state.audio.is_some() {
-            let audio_state = state.audio.as_mut().ok_or(gst::FlowError::Error)?;
-            let reader_info = audio_state
-                .reader
-                .get_info()
-                .map_err(|_| gst::FlowError::Error)?;
-            let reader_info_cont = reader_info
-                .continuous_flow_info()
-                .map_err(|_| gst::FlowError::Error)?;
-            let sample_rate = reader_info_cont.sampleRate;
-            // let batch_size = (sample_rate.numerator / (100 * sample_rate.denominator)) as usize;
-            let batch_size = 1024; //hardcode for tests
-            let Some(ts_gst) = self.obj().current_running_time() else {
-                return Err(gst::FlowError::Error);
-            };
-            if !audio_state.is_initialized {
-                state.initial_info = InitialTime {
-                    mxl_index: state.instance.get_time(),
-                    gst_time: ts_gst,
-                };
-                audio_state.is_initialized = true;
-            }
-
-            let samples = audio_state
-                .samples_reader
-                .get_samples(reader_info_cont.headIndex, batch_size)
-                .map_err(|_| gst::FlowError::Error)?;
-            let mut all_channels_data = Vec::new();
-            for ch in 0..samples.num_of_channels() {
-                let (data1, data2) = samples
-                    .channel_data(ch)
-                    .map_err(|_| gst::FlowError::Error)?;
-                all_channels_data.extend_from_slice(data1);
-                all_channels_data.extend_from_slice(data2);
-            }
-            let next_index = reader_info_cont.headIndex + batch_size as u64;
-            let next_head_timestamp = state
-                .instance
-                .index_to_timestamp(next_index, &sample_rate)
-                .map_err(|_| gst::FlowError::Error)?;
-            let read_head_timestamp = state
-                .instance
-                .index_to_timestamp(reader_info_cont.headIndex, &sample_rate)
-                .map_err(|_| gst::FlowError::Error)?;
-            let read_batch_duration = next_head_timestamp - read_head_timestamp;
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
-            state.initial_info.mxl_index += read_batch_duration;
-            let sleep_duration = Duration::from_nanos(
-                state
-                    .initial_info
-                    .mxl_index
-                    .saturating_sub(state.instance.get_time()),
-            );
-            trace!("Will sleep for {:?}.", sleep_duration);
-            state.instance.sleep_for(sleep_duration);
-            if std::time::Instant::now() >= deadline {
-                trace!(
-                    "Timeout while waiting for samples at index {}.",
-                    reader_info_cont.headIndex
-                );
-                return Err(gst::FlowError::Error);
-            }
-
-            // let Some(ts_gst) = self.obj().current_running_time() else {
-            //     return Err(gst::FlowError::Error);
-            // };
-            // if !audio_state.is_initialized {
-            //     let current_index = state.instance.get_current_index(&sample_rate);
-            //     state.initial_info = InitialTime {
-            //         mxl_index: current_index,
-            //         gst_time: ts_gst,
-            //     };
-            //     audio_state.is_initialized = true;
-            // }
-
-            let batch_duration_ns = (batch_size as u128 * 1_000_000_000u128)
-                * sample_rate.denominator as u128
-                / sample_rate.numerator as u128;
-
-            let pts_ns = gst::ClockTime::from_nseconds(
-                (audio_state.batch_counter as u128 * batch_duration_ns) as u64,
-            );
-            let mut pts = state.initial_info.gst_time + pts_ns;
-            let mut buf_size = 0;
-            if samples.num_of_channels() > 0 {
-                let channel_data = samples.channel_data(0).map_err(|_| gst::FlowError::Error)?;
-                trace!(
-                    "Buffer size for channel 0 is ({}, {}).",
-                    channel_data.0.len(),
-                    channel_data.1.len()
-                );
-                buf_size = channel_data.0.len() + channel_data.1.len();
-            }
-            let mut buffer = gst::Buffer::with_size(buf_size).map_err(|_| gst::FlowError::Error)?; //placeholder
-            pts = pts + gst::ClockTime::from_seconds(sleep_duration.as_secs());
-            if pts < ts_gst {
-                state.initial_info.gst_time += ts_gst - pts;
-                pts = ts_gst;
-            }
-            {
-                let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
-                buffer.set_pts(pts);
-                let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
-                map.as_mut_slice().copy_from_slice(&all_channels_data);
-            }
-            audio_state.batch_counter += 1;
-            trace!(
-                "Initial time: {} buffer PTS: {:?} gst running time: {}",
-                state.initial_info.gst_time,
-                buffer.pts(),
-                ts_gst
-            );
-            Ok(CreateSuccess::NewBuffer(buffer))
+            create_audio(self, state)
         } else {
             Err(gst::FlowError::Error)
         }
     }
 }
 
+fn create_audio(src: &MxlSrc, state: &mut State) -> Result<CreateSuccess, gst::FlowError> {
+    let audio_state = state.audio.as_mut().ok_or(gst::FlowError::Error)?;
+    let mut reader_info = audio_state
+        .reader
+        .get_info()
+        .map_err(|_| gst::FlowError::Error)?;
+    let mut reader_info_cont = reader_info
+        .continuous_flow_info()
+        .map_err(|_| gst::FlowError::Error)?;
+    let sample_rate = reader_info_cont.sampleRate;
+
+    let batch_size = DEFAULT_BATCH_SIZE.min(reader_info_cont.bufferLength / 2);
+    let ring = reader_info_cont.bufferLength as u64;
+    let batch = batch_size as u64;
+
+    let Some(ts_gst) = src.obj().current_running_time() else {
+        return Err(gst::FlowError::Error);
+    };
+
+    if !audio_state.is_initialized {
+        state.initial_info = InitialTime {
+            mxl_index: state.instance.get_time(),
+            gst_time: ts_gst,
+        };
+        audio_state.index = reader_info_cont.headIndex.saturating_sub(batch);
+        audio_state.is_initialized = true;
+        audio_state.batch_counter = 0;
+    }
+
+    let mut head = reader_info_cont.headIndex as u64;
+    while audio_state.index + batch > head {
+        trace!(
+            "Reader ahead: index {} + batch {} > head {} (waiting for producer)",
+            audio_state.index,
+            batch,
+            head
+        );
+        reader_info = audio_state
+            .reader
+            .get_info()
+            .map_err(|_| gst::FlowError::Error)?;
+        reader_info_cont = reader_info
+            .continuous_flow_info()
+            .map_err(|_| gst::FlowError::Error)?;
+        head = reader_info_cont.headIndex as u64;
+    }
+
+    let oldest_valid = head.saturating_sub(ring.saturating_sub(batch));
+    if audio_state.index < oldest_valid {
+        let cushion = batch.saturating_mul(2);
+        let target = head.saturating_sub(cushion);
+        trace!(
+            "CATCH-UP (pre-read): index {} < oldest {}. Jumping -> {}, head={}, ring={}",
+            audio_state.index,
+            oldest_valid,
+            target,
+            head,
+            ring
+        );
+
+        audio_state.index = target;
+
+        state.initial_info.gst_time = ts_gst;
+        state.initial_info.mxl_index = state.instance.get_time();
+        audio_state.batch_counter = 0;
+        audio_state.next_discont = true;
+    }
+
+    let read_once = |idx: u64| audio_state.samples_reader.get_samples(idx, batch as usize);
+
+    let samples = match read_once(audio_state.index) {
+        Ok(s) => s,
+        Err(_) => {
+            reader_info = audio_state
+                .reader
+                .get_info()
+                .map_err(|_| gst::FlowError::Error)?;
+            reader_info_cont = reader_info
+                .continuous_flow_info()
+                .map_err(|_| gst::FlowError::Error)?;
+            head = reader_info_cont.headIndex as u64;
+
+            let cushion = batch.saturating_mul(2);
+            let target = head.saturating_sub(cushion);
+            trace!(
+                "CATCH-UP (retry): get_samples failed at {}, head {}. Jumping -> {}",
+                audio_state.index,
+                head,
+                target
+            );
+
+            audio_state.index = target;
+            state.initial_info.gst_time = ts_gst;
+            state.initial_info.mxl_index = state.instance.get_time();
+            audio_state.batch_counter = 0;
+            audio_state.next_discont = true;
+
+            read_once(audio_state.index).map_err(|_| gst::FlowError::Error)?
+        }
+    };
+
+    let mut all_channels_data = Vec::new();
+    for ch in 0..samples.num_of_channels() {
+        let (data1, data2) = samples
+            .channel_data(ch)
+            .map_err(|_| gst::FlowError::Error)?;
+        all_channels_data.extend_from_slice(data1);
+        all_channels_data.extend_from_slice(data2);
+    }
+
+    let next_index = audio_state.index + batch;
+    let next_head_timestamp = state
+        .instance
+        .index_to_timestamp(next_index, &sample_rate)
+        .map_err(|_| gst::FlowError::Error)?;
+    let read_head_timestamp = state
+        .instance
+        .index_to_timestamp(audio_state.index, &sample_rate)
+        .map_err(|_| gst::FlowError::Error)?;
+    let read_batch_duration = next_head_timestamp - read_head_timestamp;
+
+    state.initial_info.mxl_index = state
+        .initial_info
+        .mxl_index
+        .saturating_add(read_batch_duration);
+
+    let now_mxl = state.instance.get_time();
+    let sleep_ns = state.initial_info.mxl_index.saturating_sub(now_mxl);
+    let sleep_duration = Duration::from_nanos(sleep_ns);
+    if !sleep_duration.is_zero() {
+        trace!("Will sleep for {:?}.", sleep_duration);
+        state.instance.sleep_for(sleep_duration);
+    }
+
+    let batch_duration_ns = (batch as u128 * 1_000_000_000u128) * sample_rate.denominator as u128
+        / sample_rate.numerator as u128;
+
+    let pts_ns = gst::ClockTime::from_nseconds(
+        (audio_state.batch_counter as u128 * batch_duration_ns) as u64,
+    );
+    let mut pts = state.initial_info.gst_time + pts_ns;
+
+    if pts < ts_gst {
+        state.initial_info.gst_time += ts_gst - pts;
+        pts = ts_gst;
+    }
+
+    let mut buf_size = 0;
+    for i in 0..samples.num_of_channels() {
+        let (a, b) = samples.channel_data(i).map_err(|_| gst::FlowError::Error)?;
+        buf_size += a.len() + b.len();
+    }
+
+    let mut buffer = gst::Buffer::with_size(buf_size).map_err(|_| gst::FlowError::Error)?;
+
+    {
+        let buffer = buffer.get_mut().ok_or(gst::FlowError::Error)?;
+        buffer.set_pts(pts);
+
+        if std::mem::take(&mut audio_state.next_discont) {
+            buffer.set_flags(gst::BufferFlags::DISCONT);
+        }
+
+        let mut map = buffer.map_writable().map_err(|_| gst::FlowError::Error)?;
+        map.as_mut_slice().copy_from_slice(&all_channels_data);
+    }
+
+    audio_state.batch_counter += 1;
+    audio_state.index += batch;
+
+    trace!(
+        "Initial time: {} buffer PTS: {:?} gst running time: {}",
+        state.initial_info.gst_time,
+        pts,
+        ts_gst
+    );
+
+    Ok(CreateSuccess::NewBuffer(buffer))
+}
+
 #[cfg(test)]
 mod tests {
     use std::thread;
 
-    use gst::CoreError;
+    use gst::{CoreError, ElementFactory, Pipeline};
 
     use super::*;
 
@@ -1102,37 +1178,125 @@ mod tests {
     #[cfg_attr(feature = "trace", tracing_test::traced_test)]
 
     fn start_valid_audio_pipeline() -> Result<(), glib::Error> {
+        // Initialize GStreamer
         gst::init()?;
-        gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
+
+        // Register your custom plugin if needed
+        gst::Element::register(None, "rsmxlsrc", gst::Rank::NONE, MxlSrc::type_())
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        let src = gst::ElementFactory::make("mxlsrc")
+        // Create all elements
+        let src = ElementFactory::make("rsmxlsrc")
             .property("audio-flow", "8fbec3b1-1b0f-417d-9059-8b94a47197ed")
             .property("domain", "/mnt/mxl/domain_1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        let convert = gst::ElementFactory::make("audioconvert")
-            .build()
-            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        let sink = gst::ElementFactory::make("fakesink")
+        let capsfilter = ElementFactory::make("capsfilter")
+            .property(
+                "caps",
+                &gst::Caps::builder("audio/x-raw")
+                    .field("channels", 1i32)
+                    .build(),
+            )
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
-        let pipeline = gst::Pipeline::new();
-        pipeline
-            .add_many(&[&src, &convert, &sink])
-            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        gst::Element::link_many([&src, &convert, &sink])
+        let queue0 = ElementFactory::make("queue")
+            .name("queue0")
+            .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
+        let interleave = ElementFactory::make("interleave")
+            .name("m")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let queue1 = ElementFactory::make("queue")
+            .name("queue1")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let audioconvert = ElementFactory::make("audioconvert")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let queue2 = ElementFactory::make("queue")
+            .name("queue2")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let volume = ElementFactory::make("volume")
+            .property("volume", 0.1f64)
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let queue3 = ElementFactory::make("queue")
+            .name("queue3")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let sink = ElementFactory::make("fakesink")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        // Build the pipeline
+        let pipeline = Pipeline::new();
+
         pipeline
-            .set_state(gst::State::Playing)
-            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
-        thread::sleep(Duration::from_millis(600));
+            .add_many(&[
+                &src,
+                &capsfilter,
+                &queue0,
+                &interleave,
+                &queue1,
+                &audioconvert,
+                &queue2,
+                &volume,
+                &queue3,
+                &sink,
+            ])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        // Link elements for the main chain
+        gst::Element::link_many([
+            &interleave,
+            &queue1,
+            &audioconvert,
+            &queue2,
+            &volume,
+            &queue3,
+            &sink,
+        ])
+        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        // Manually link the source → caps → queue0 → interleave.sink_0
+        gst::Element::link_many([&src, &capsfilter, &queue0])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let interleave_sink_0 = interleave
+            .request_pad_simple("sink_0")
+            .ok_or_else(|| glib::Error::new(CoreError::Failed, "Failed to get m.sink_0 pad"))?;
+
+        let queue0_src_pad = queue0
+            .static_pad("src")
+            .ok_or_else(|| glib::Error::new(CoreError::Failed, "Missing queue0 src pad"))?;
+
+        queue0_src_pad.link(&interleave_sink_0).map_err(|_| {
+            glib::Error::new(CoreError::Failed, "Failed to link queue0 to interleave")
+        })?;
+
+        // Run the pipeline
+        pipeline.set_state(gst::State::Playing).map_err(|_| {
+            glib::Error::new(CoreError::Failed, "Failed to set pipeline to Playing")
+        })?;
+
+        thread::sleep(Duration::from_secs(1));
+
         pipeline
             .set_state(gst::State::Null)
-            .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
+            .map_err(|_| glib::Error::new(CoreError::Failed, "Failed to set pipeline to Null"))?;
+
         Ok(())
     }
 
