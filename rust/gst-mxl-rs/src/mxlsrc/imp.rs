@@ -518,96 +518,8 @@ impl BaseSrcImpl for MxlSrc {
     }
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        let mut context = self.context.lock().map_err(|e| {
-            gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to get context mutex: {}", e]
-            )
-        })?;
         self.unlock_stop()?;
-        let settings = self.settings.lock().map_err(|e| {
-            gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to get settings mutex: {}", e]
-            )
-        })?;
-        if settings.video_flow.is_some() && settings.audio_flow.is_some() {
-            return Err(gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Video and audio flows can't be used together"]
-            ));
-        }
-        let reader = init_mxl_reader(&settings)?;
-        let binding = reader.get_info();
-        let reader_info = binding.as_ref();
-        let instance = init_mxl_instance(&settings).map_err(|e| {
-            gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to initialize MXL instance: {}", e]
-            )
-        })?;
-
-        let initial_info = InitialTime {
-            mxl_index: 0,
-            gst_time: ClockTime::from_mseconds(0),
-        };
-        if settings.video_flow.is_some() {
-            let grain_rate = reader_info
-                .map_err(|e| {
-                    gst::error_msg!(
-                        gst::CoreError::Failed,
-                        ["Failed to initialize MXL reader info: {}", e]
-                    )
-                })?
-                .discrete_flow_info()
-                .map_err(|e| {
-                    gst::error_msg!(
-                        gst::CoreError::Failed,
-                        ["Failed to initialize MXL discrete flow info: {}", e]
-                    )
-                })?
-                .grainRate;
-            let grain_reader = reader.to_grain_reader().map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to initialize MXL grain reader: {}", e]
-                )
-            })?;
-
-            context.state = Some(State {
-                instance: instance,
-                initial_info: initial_info,
-                video: Some(VideoState {
-                    grain_rate: grain_rate,
-                    frame_counter: 0,
-                    is_initialized: false,
-                    grain_reader: grain_reader,
-                }),
-                audio: None,
-            });
-        } else if settings.audio_flow.is_some() {
-            let reader_audio = init_mxl_reader(&settings)?;
-            let samples_reader = reader_audio.to_samples_reader().map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to initialize MXL grain reader: {}", e]
-                )
-            })?;
-            context.state = Some(State {
-                instance,
-                initial_info,
-                video: None,
-                audio: Some(AudioState {
-                    reader,
-                    samples_reader,
-                    batch_counter: 0,
-                    is_initialized: false,
-                    index: 0,
-                    next_discont: false,
-                }),
-            })
-        }
-
+        init(self)?;
         gst::info!(CAT, imp = self, "Started");
 
         Ok(())
@@ -712,6 +624,109 @@ fn init_mxl_reader(
     };
 
     Ok(reader)
+}
+
+fn init(mxlsrc: &MxlSrc) -> Result<(), gst::ErrorMessage> {
+    let settings = mxlsrc
+        .settings
+        .lock()
+        .map_err(|_| gst::error_msg!(gst::CoreError::Failed, ["Missing settings"]))?;
+
+    let mut context = mxlsrc.context.lock().map_err(|e| {
+        gst::error_msg!(
+            gst::CoreError::Failed,
+            ["Failed to get context mutex: {}", e]
+        )
+    })?;
+
+    let start = Instant::now();
+    let reader;
+
+    loop {
+        match init_mxl_reader(&settings) {
+            Ok(r) => {
+                reader = r;
+                break;
+            }
+            Err(e) => {
+                if start.elapsed() >= Duration::from_secs(5) {
+                    return Err(e.into());
+                }
+                eprintln!(" Failed to init reader ({e}), retrying...");
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
+    let binding = reader.get_info();
+    let reader_info = binding.as_ref();
+    let instance = init_mxl_instance(&settings).map_err(|e| {
+        gst::error_msg!(
+            gst::CoreError::Failed,
+            ["Failed to initialize MXL instance: {}", e]
+        )
+    })?;
+
+    let initial_info = InitialTime {
+        mxl_index: 0,
+        gst_time: ClockTime::from_mseconds(0),
+    };
+    if settings.video_flow.is_some() {
+        let grain_rate = reader_info
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to initialize MXL reader info: {}", e]
+                )
+            })?
+            .discrete_flow_info()
+            .map_err(|e| {
+                gst::error_msg!(
+                    gst::CoreError::Failed,
+                    ["Failed to initialize MXL discrete flow info: {}", e]
+                )
+            })?
+            .grainRate;
+        let grain_reader = reader.to_grain_reader().map_err(|e| {
+            gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to initialize MXL grain reader: {}", e]
+            )
+        })?;
+
+        context.state = Some(State {
+            instance: instance,
+            initial_info: initial_info,
+            video: Some(VideoState {
+                grain_rate: grain_rate,
+                frame_counter: 0,
+                is_initialized: false,
+                grain_reader: grain_reader,
+            }),
+            audio: None,
+        });
+    } else if settings.audio_flow.is_some() {
+        let reader_audio = init_mxl_reader(&settings)?;
+        let samples_reader = reader_audio.to_samples_reader().map_err(|e| {
+            gst::error_msg!(
+                gst::CoreError::Failed,
+                ["Failed to initialize MXL grain reader: {}", e]
+            )
+        })?;
+        context.state = Some(State {
+            instance,
+            initial_info,
+            video: None,
+            audio: Some(AudioState {
+                reader,
+                samples_reader,
+                batch_counter: 0,
+                is_initialized: false,
+                index: 0,
+                next_discont: false,
+            }),
+        });
+    }
+    Ok(())
 }
 
 fn init_mxl_instance(
@@ -1317,6 +1332,109 @@ mod tests {
             .create_flow_reader(flow_id.as_str())
             .map_err(|e| glib::Error::new(gst::CoreError::Failed, e.to_string().as_str()))?;
         assert!(reader.get_info().is_ok());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    fn full_audio_loop_pipeline() -> Result<(), glib::Error> {
+        use gst::prelude::*;
+        use gst::{CoreError, ElementFactory, Pipeline};
+        use std::thread;
+        use std::time::Duration;
+
+        gst::init()?;
+
+        gst::Element::register(None, "rsmxlsrc", gst::Rank::NONE, MxlSrc::type_())
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+        gst::Element::register(
+            None,
+            "rsmxlsink",
+            gst::Rank::NONE,
+            crate::mxlsink::MxlSink::static_type(),
+        )
+        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let flow_id = "8fbec3b1-1b0f-417d-9059-8b94a47197ed";
+        let domain = "/mnt/mxl/domain_1";
+
+        let audiotestsrc = ElementFactory::make("audiotestsrc")
+            .property("is-live", true)
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let audioconvert1 = ElementFactory::make("audioconvert")
+            .name("audioconvert1")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let audioresample = ElementFactory::make("audioresample")
+            .name("audioresample")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let rsmxlsink = ElementFactory::make("rsmxlsink")
+            .property("flow-id", flow_id)
+            .property("domain", domain)
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let queue = ElementFactory::make("queue")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let rsmxlsrc = ElementFactory::make("rsmxlsrc")
+            .property("audio-flow", flow_id)
+            .property("domain", domain)
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let audioconvert2 = ElementFactory::make("audioconvert")
+            .name("audioconvert2")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let autoaudiosink = ElementFactory::make("fakesink")
+            .build()
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        let pipeline = Pipeline::new();
+
+        pipeline
+            .add_many(&[
+                &audiotestsrc,
+                &audioconvert1,
+                &audioresample,
+                &rsmxlsink,
+                &queue,
+                &rsmxlsrc,
+                &audioconvert2,
+                &autoaudiosink,
+            ])
+            .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        gst::Element::link_many([
+            &audiotestsrc,
+            &audioconvert1,
+            &audioresample,
+            &rsmxlsink,
+            &queue,
+            &rsmxlsrc,
+            &audioconvert2,
+            &autoaudiosink,
+        ])
+        .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
+
+        pipeline.set_state(gst::State::Playing).map_err(|_| {
+            glib::Error::new(CoreError::Failed, "Failed to set pipeline to Playing")
+        })?;
+
+        thread::sleep(Duration::from_secs(5));
+
+        pipeline
+            .set_state(gst::State::Null)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "Failed to set pipeline to Null"))?;
+
         Ok(())
     }
 }

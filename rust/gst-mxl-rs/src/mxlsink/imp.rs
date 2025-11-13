@@ -369,12 +369,11 @@ impl BaseSinkImpl for MxlSink {
         let settings = self.settings.lock().map_err(|e| {
             gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
         })?;
-        state
-            .instance
-            .destroy_flow(&settings.flow_id)
-            .map_err(|e| {
-                gst::error_msg!(gst::CoreError::Failed, ["Failed to get state mutex: {}", e])
-            })?;
+        if state.flow.is_some() {
+            if let Err(e) = state.instance.destroy_flow(&settings.flow_id) {
+                gst::warning!(CAT, imp = self, "Failed to destroy flow: {}", e);
+            }
+        }
 
         gst::info!(CAT, imp = self, "Stopped");
         Ok(())
