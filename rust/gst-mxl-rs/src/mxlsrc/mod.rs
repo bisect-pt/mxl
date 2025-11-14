@@ -10,8 +10,6 @@
 
 use gst::glib;
 use gst::prelude::*;
-use tracing::level_filters::LevelFilter;
-use tracing_subscriber::util::SubscriberInitExt;
 
 mod imp;
 
@@ -20,16 +18,6 @@ glib::wrapper! {
 }
 
 pub fn register(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    let _ = tracing_subscriber::fmt()
-        .compact()
-        .with_file(true)
-        .with_line_number(true)
-        .with_thread_ids(true)
-        .with_target(false)
-        .with_max_level(LevelFilter::TRACE)
-        .with_ansi(true)
-        .finish()
-        .try_init();
     gst::Element::register(
         Some(plugin),
         "rsmxlsrc",
