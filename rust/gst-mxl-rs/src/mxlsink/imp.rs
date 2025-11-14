@@ -204,6 +204,21 @@ impl ObjectImpl for MxlSink {
     }
 
     fn constructed(&self) {
+        #[cfg(feature = "tracing")]
+        {
+            use tracing_subscriber::filter::LevelFilter;
+            use tracing_subscriber::util::SubscriberInitExt;
+            let result = tracing_subscriber::fmt()
+                .compact()
+                .with_file(true)
+                .with_line_number(true)
+                .with_thread_ids(true)
+                .with_target(false)
+                .with_max_level(LevelFilter::TRACE)
+                .with_ansi(true)
+                .finish()
+                .try_init();
+        }
         self.parent_constructed();
         self.obj().set_sync(true);
     }
@@ -864,8 +879,8 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
-    fn flow_def_generation() {
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
+    fn flow_def_generation() -> Result<(), glib::Error> {
         let flow_id = String::from("5fbec3b1-1b0f-417d-9059-8b94a47197ed");
         let width = 1920;
         let height = 1080;
@@ -928,7 +943,8 @@ mod tests {
             ],
         };
 
-        let json = serde_json::to_value(&flow_def).unwrap();
+        let json = serde_json::to_value(&flow_def)
+            .map_err(|_| glib::Error::new(CoreError::Failed, "Failed to convert to json"))?;
 
         let expected = serde_json::json!({
             "$copyright": "SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project.",
@@ -971,9 +987,10 @@ mod tests {
         });
         println!("{:#?}", json);
         assert_eq!(json, expected);
+        Ok(())
     }
     #[test]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn set_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsink", gst::Rank::NONE, MxlSink::type_())
@@ -1016,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn valid_gray_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(
@@ -1114,7 +1131,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn valid_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(
@@ -1176,7 +1193,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn valid_test_src_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(
@@ -1250,7 +1267,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn valid_audio_pipeline() -> Result<(), glib::Error> {
         use gst::{prelude::*, CoreError};
 

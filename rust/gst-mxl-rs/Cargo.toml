@@ -23,7 +23,7 @@ tracing-test = "0.1"
 mxl = { path = "../mxl" }
 
 [features]
-trace = []
+tracing = []
 
 [lib]
 name = "gstmxlsrc"

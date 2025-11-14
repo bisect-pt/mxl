@@ -226,7 +226,21 @@ impl ObjectImpl for MxlSrc {
 
     fn constructed(&self) {
         self.parent_constructed();
-
+        #[cfg(feature = "tracing")]
+        {
+            use tracing_subscriber::filter::LevelFilter;
+            use tracing_subscriber::util::SubscriberInitExt;
+            let result = tracing_subscriber::fmt()
+                .compact()
+                .with_file(true)
+                .with_line_number(true)
+                .with_thread_ids(true)
+                .with_target(false)
+                .with_max_level(LevelFilter::TRACE)
+                .with_ansi(true)
+                .finish()
+                .try_init();
+        }
         let obj = self.obj();
         obj.set_live(true);
         obj.set_format(gst::Format::Time);
@@ -751,7 +765,11 @@ impl PushSrcImpl for MxlSrc {
         &self,
         _buffer: Option<&mut gst::BufferRef>,
     ) -> Result<CreateSuccess, gst::FlowError> {
-        let pad_caps = self.obj().static_pad("src").unwrap().current_caps();
+        let pad_caps = self
+            .obj()
+            .static_pad("src")
+            .ok_or(gst::FlowError::Error)?
+            .current_caps();
         trace!("src pad current caps: {:?}", pad_caps);
         let mut context = self.context.lock().map_err(|_| gst::FlowError::Error)?;
         let state = context.state.as_mut().ok_or(gst::FlowError::Error)?;
@@ -837,7 +855,7 @@ impl PushSrcImpl for MxlSrc {
             );
             let _ = initial_info;
             let initial_info = &state.initial_info;
-            let pts = (video_state.frame_counter/*+ missed_frames*/) as u128 * 1_000_000_000u128;
+            let pts = (video_state.frame_counter) as u128 * 1_000_000_000u128;
             let pts = pts * rate.denominator as u128;
             let pts = pts / rate.numerator as u128;
 
@@ -1017,14 +1035,6 @@ fn create_audio(src: &MxlSrc, state: &mut State) -> Result<CreateSuccess, gst::F
             interleaved.extend_from_slice(&chan[offset..offset + std::mem::size_of::<f32>()]);
         }
     }
-    // let mut all_channels_data = Vec::new();
-    // for ch in 0..samples.num_of_channels() {
-    //     let (data1, data2) = samples
-    //         .channel_data(ch)
-    //         .map_err(|_| gst::FlowError::Error)?;
-    //     all_channels_data.extend_from_slice(data1);
-    //     all_channels_data.extend_from_slice(data2);
-    // }
 
     let next_index = audio_state.index + batch;
     let next_head_timestamp = state
@@ -1126,7 +1136,7 @@ mod tests {
 
     #[test]
     #[ignore]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn negotiate_caps() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
@@ -1189,7 +1199,7 @@ mod tests {
 
     #[test]
     #[ignore]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
 
     fn start_valid_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
@@ -1224,7 +1234,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
 
     fn start_valid_audio_pipeline() -> Result<(), glib::Error> {
         gst::init()?;
@@ -1308,7 +1318,7 @@ mod tests {
 
     #[test]
     #[ignore]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn is_valid_reader() -> Result<(), glib::Error> {
         gst::init()?;
         gst::Element::register(None, "mxlsrc", gst::Rank::NONE, MxlSrc::type_())
@@ -1336,7 +1346,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "trace", tracing_test::traced_test)]
+    #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn full_audio_loop_pipeline() -> Result<(), glib::Error> {
         use gst::prelude::*;
         use gst::{CoreError, ElementFactory, Pipeline};
