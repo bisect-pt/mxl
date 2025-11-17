@@ -30,8 +30,7 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::time::Instant;
 
-use serde::Serialize;
-
+use crate::flowdef::*;
 use crate::mxlsink;
 
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
@@ -44,66 +43,6 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
 
 const DEFAULT_FLOW_ID: &str = "";
 const DEFAULT_DOMAIN: &str = "";
-
-#[derive(Debug, Serialize)]
-struct SampleRate {
-    numerator: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct AudioFlowDef {
-    #[serde(rename = "$copyright")]
-    copyright: String,
-    #[serde(rename = "$license")]
-    license: String,
-    description: String,
-    format: String,
-    tags: HashMap<String, Vec<String>>,
-    label: String,
-    id: String,
-    media_type: String,
-    sample_rate: SampleRate,
-    channel_count: i32,
-    bit_depth: u8,
-    parents: Vec<String>,
-    commit_batch_size: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct GrainRate {
-    numerator: i32,
-    denominator: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct Component {
-    name: String,
-    width: i32,
-    height: i32,
-    bit_depth: u8,
-}
-
-#[derive(Debug, Serialize)]
-struct FlowDef {
-    #[serde(rename = "$copyright")]
-    copyright: String,
-    #[serde(rename = "$license")]
-    license: String,
-
-    description: String,
-    id: String,
-    tags: HashMap<String, Vec<String>>,
-    format: String,
-    label: String,
-    parents: Vec<String>,
-    media_type: String,
-    grain_rate: GrainRate,
-    frame_width: i32,
-    frame_height: i32,
-    interlace_mode: String,
-    colorspace: String,
-    components: Vec<Component>,
-}
 
 #[derive(Debug, Clone)]
 struct Settings {
@@ -139,7 +78,7 @@ struct AudioState {
     pub writer: SamplesWriter,
     pub bit_depth: u8,
     pub batch_size: usize,
-    pub flow_def: AudioFlowDef,
+    pub flow_def: FlowDefAudio,
 }
 
 #[derive(Default)]
@@ -459,7 +398,7 @@ impl BaseSinkImpl for MxlSink {
             let format = info.format().to_string();
             let flow_id = &settings.flow_id;
 
-            let flow_def = AudioFlowDef {
+            let flow_def = FlowDefAudio {
                 copyright:
                     "SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project."
                         .into(),
@@ -474,7 +413,6 @@ impl BaseSinkImpl for MxlSink {
                 channel_count: channels,
                 bit_depth: bit_depth as u8,
                 parents: vec![],
-                commit_batch_size: 0,
             };
 
             let instance = &state.instance;
@@ -524,7 +462,7 @@ impl BaseSinkImpl for MxlSink {
                 .get::<String>("colorimetry")
                 .unwrap_or_else(|_| "BT709".to_string());
             let flow_id = &settings.flow_id;
-            let flow_def = FlowDef {
+            let flow_def = FlowDefVideo {
                 copyright:
                     "SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project."
                         .into(),
@@ -893,7 +831,7 @@ mod tests {
             "urn:x-nmos:tag:grouphint/v1.0".to_string(),
             vec!["Media Function XYZ:Audio".to_string()],
         );
-        let flow_def = FlowDef {
+        let flow_def = FlowDefVideo {
             copyright:
                 "SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project."
                     .into(),
@@ -904,7 +842,7 @@ mod tests {
             )
             .into(),
             id: flow_id.to_string(),
-            tags: tags,
+            tags,
             format: "urn:x-nmos:format:video".into(),
             label: format!(
                 "MXL Test Flow, 1080p{}",
