@@ -12,6 +12,7 @@ use gst::glib;
 use gst::prelude::*;
 
 mod imp;
+mod mxl_helper;
 mod tests;
 
 glib::wrapper! {

@@ -11,12 +11,10 @@
 use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
-use gst::ClockTime;
 use gst_base::prelude::*;
 use gst_base::subclass::base_src::CreateSuccess;
 use gst_base::subclass::prelude::*;
 
-use mxl::config::get_mxl_so_path;
 use mxl::GrainReader;
 use mxl::MxlFlowReader;
 use mxl::MxlInstance;
@@ -26,14 +24,13 @@ use tracing::trace;
 
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::sync::MutexGuard;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 use std::u128;
 
-use crate::flowdef::*;
 use crate::mxlsrc;
+use crate::mxlsrc::mxl_helper;
 
 const GET_GRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_BATCH_SIZE: u32 = 48;
@@ -50,16 +47,16 @@ const DEFAULT_FLOW_ID: &str = "";
 const DEFAULT_DOMAIN: &str = "";
 
 #[derive(Debug, Default, Clone)]
-struct InitialTime {
-    mxl_index: u64,
-    gst_time: gst::ClockTime,
+pub struct InitialTime {
+    pub mxl_index: u64,
+    pub gst_time: gst::ClockTime,
 }
 
 #[derive(Debug, Clone)]
-struct Settings {
-    video_flow: Option<String>,
-    audio_flow: Option<String>,
-    domain: String,
+pub struct Settings {
+    pub video_flow: Option<String>,
+    pub audio_flow: Option<String>,
+    pub domain: String,
 }
 
 impl Default for Settings {
@@ -72,32 +69,32 @@ impl Default for Settings {
     }
 }
 
-struct State {
-    instance: MxlInstance,
-    initial_info: InitialTime,
-    video: Option<VideoState>,
-    audio: Option<AudioState>,
+pub struct State {
+    pub instance: MxlInstance,
+    pub initial_info: InitialTime,
+    pub video: Option<VideoState>,
+    pub audio: Option<AudioState>,
 }
 
-struct VideoState {
-    grain_rate: Rational,
-    frame_counter: u64,
-    is_initialized: bool,
-    grain_reader: GrainReader,
+pub struct VideoState {
+    pub grain_rate: Rational,
+    pub frame_counter: u64,
+    pub is_initialized: bool,
+    pub grain_reader: GrainReader,
 }
 
-struct AudioState {
-    reader: MxlFlowReader,
-    samples_reader: SamplesReader,
-    batch_counter: u64,
-    is_initialized: bool,
-    index: u64,
-    next_discont: bool,
+pub struct AudioState {
+    pub reader: MxlFlowReader,
+    pub samples_reader: SamplesReader,
+    pub batch_counter: u64,
+    pub is_initialized: bool,
+    pub index: u64,
+    pub next_discont: bool,
 }
 
 #[derive(Default)]
-struct Context {
-    state: Option<State>,
+pub struct Context {
+    pub state: Option<State>,
 }
 
 struct ClockWait {
@@ -116,8 +113,8 @@ impl Default for ClockWait {
 
 #[derive(Default)]
 pub struct MxlSrc {
-    settings: Mutex<Settings>,
-    context: Mutex<Context>,
+    pub settings: Mutex<Settings>,
+    pub context: Mutex<Context>,
     clock_wait: Mutex<ClockWait>,
 }
 
@@ -306,10 +303,10 @@ impl BaseSrcImpl for MxlSrc {
             return self.parent_negotiate();
         }
 
-        let flow_id = get_flow_type_id(&settings)?;
-        let serde_json = get_mxl_flow_json(&settings.domain, flow_id)?;
-        let json_def = get_flow_def(self, serde_json)?;
-        set_json_caps(self, json_def)
+        let flow_id = mxl_helper::get_flow_type_id(&settings)?;
+        let serde_json = mxl_helper::get_mxl_flow_json(&settings.domain, flow_id)?;
+        let json_def = mxl_helper::get_flow_def(self, serde_json)?;
+        mxl_helper::set_json_caps(self, json_def)
     }
 
     fn set_caps(&self, caps: &gst::Caps) -> Result<(), gst::LoggableError> {
@@ -377,7 +374,7 @@ impl BaseSrcImpl for MxlSrc {
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         self.unlock_stop()?;
-        init(self)?;
+        mxl_helper::init(self)?;
         gst::info!(CAT, imp = self, "Started");
 
         Ok(())
@@ -427,298 +424,6 @@ impl BaseSrcImpl for MxlSrc {
 
         Ok(())
     }
-}
-
-fn get_flow_type_id<'a>(
-    settings: &'a MutexGuard<'a, Settings>,
-) -> Result<&'a String, gst::LoggableError> {
-    let id = if settings.video_flow.is_some() {
-        let video_flow_id = settings
-            .video_flow
-            .as_ref()
-            .ok_or(gst::loggable_error!(CAT, "No video flow id was found"))?;
-        video_flow_id
-    } else {
-        let audio_flow_id = settings
-            .audio_flow
-            .as_ref()
-            .ok_or(gst::loggable_error!(CAT, "No audio flow id was found"))?;
-        audio_flow_id
-    };
-    Ok(id)
-}
-
-fn get_mxl_flow_json(
-    domain: &String,
-    flow_id: &String,
-) -> Result<serde_json::Value, gst::LoggableError> {
-    let json_path = format!("{}/{}.mxl-flow/.json", domain, flow_id);
-    let data = std::fs::read_to_string(&json_path)
-        .map_err(|e| gst::loggable_error!(CAT, "Failed to read JSON: {}", e))?;
-    let serde_json: serde_json::Value = serde_json::from_str(&data)
-        .map_err(|e| gst::loggable_error!(CAT, "Invalid JSON: {}", e))?;
-    Ok(serde_json)
-}
-
-fn set_json_caps(src: &MxlSrc, json: FlowDef) -> Result<(), gst::LoggableError> {
-    match json.video {
-        Some(json) => {
-            let caps = gst::Caps::builder("video/x-raw")
-                .field("format", "v210")
-                .field("width", json.frame_width)
-                .field("height", json.frame_height)
-                .field(
-                    "framerate",
-                    gst::Fraction::new(json.grain_rate.numerator, json.grain_rate.denominator),
-                )
-                .field("interlace-mode", json.interlace_mode)
-                .field("colorimetry", json.colorspace.to_lowercase())
-                .build();
-
-            src.obj()
-                .set_caps(&caps)
-                .map_err(|err| gst::loggable_error!(CAT, "Failed to set caps: {}", err))?;
-
-            gst::info!(CAT, imp = src, "Negotiated caps: {}", caps);
-            return Ok(());
-        }
-        None => match json.audio {
-            Some(json) => {
-                let caps = gst::Caps::builder("audio/x-raw")
-                    .field("format", "F32LE")
-                    .field("rate", json.sample_rate.numerator)
-                    .field("channels", json.channel_count)
-                    .field("layout", "interleaved")
-                    .field(
-                        "channel-mask",
-                        generate_channel_mask_from_channels(json.channel_count as u32),
-                    )
-                    .build();
-                src.obj()
-                    .set_caps(&caps)
-                    .map_err(|err| gst::loggable_error!(CAT, "Failed to set caps: {}", err))?;
-
-                gst::info!(CAT, imp = src, "Negotiated caps: {}", caps);
-                return Ok(());
-            }
-            None => Err(gst::loggable_error!(
-                CAT,
-                "Failed to negotiate caps: No video or audio caps were found"
-            )),
-        },
-    }
-}
-
-fn get_flow_def(
-    src: &MxlSrc,
-    serde_json: serde_json::Value,
-) -> Result<FlowDef, gst::LoggableError> {
-    let media_type = serde_json
-        .get("media_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let json = match media_type {
-        "video/v210" => {
-            let flow: FlowDefVideo = serde_json::from_value(serde_json)
-                .map_err(|e| gst::loggable_error!(CAT, "Invalid video flow JSON: {}", e))?;
-            FlowDef {
-                video: Some(flow),
-                audio: None,
-            }
-        }
-        "audio/float32" => {
-            let flow: FlowDefAudio = serde_json::from_value(serde_json)
-                .map_err(|e| gst::loggable_error!(CAT, "Invalid audio flow JSON: {}", e))?;
-            FlowDef {
-                video: None,
-                audio: Some(flow),
-            }
-        }
-        _ => {
-            gst::warning!(CAT, imp = src, "Unknown media_type '{}'", media_type);
-            return Err(gst::loggable_error!(
-                CAT,
-                "Unknown media type {}",
-                media_type
-            ));
-        }
-    };
-    Ok(json)
-}
-fn generate_channel_mask_from_channels(channels: u32) -> gst::Bitmask {
-    let mask = if channels >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << channels) - 1
-    };
-    gst::Bitmask::new(mask)
-}
-
-fn init_mxl_reader(
-    settings: &MutexGuard<'_, Settings>,
-) -> Result<MxlFlowReader, gst::ErrorMessage> {
-    let mxl_instance = init_mxl_instance(settings)?;
-    let reader = if settings.video_flow.is_some() {
-        let reader = mxl_instance
-            .create_flow_reader(
-                settings
-                    .video_flow
-                    .as_ref()
-                    .ok_or(gst::error_msg!(
-                        gst::CoreError::Failed,
-                        ["Failed to create MXL reader: Video flow id is None"]
-                    ))?
-                    .as_str(),
-            )
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to create MXL reader: {}", e]
-                )
-            })?;
-        reader
-    } else {
-        let reader = mxl_instance
-            .create_flow_reader(
-                settings
-                    .audio_flow
-                    .as_ref()
-                    .ok_or(gst::error_msg!(
-                        gst::CoreError::Failed,
-                        ["Failed to create MXL reader: Audio flow id is None"]
-                    ))?
-                    .as_str(),
-            )
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to create MXL reader: {}", e]
-                )
-            })?;
-        reader
-    };
-
-    Ok(reader)
-}
-
-fn init(mxlsrc: &MxlSrc) -> Result<(), gst::ErrorMessage> {
-    let settings = mxlsrc
-        .settings
-        .lock()
-        .map_err(|_| gst::error_msg!(gst::CoreError::Failed, ["Missing settings"]))?;
-
-    let mut context = mxlsrc.context.lock().map_err(|e| {
-        gst::error_msg!(
-            gst::CoreError::Failed,
-            ["Failed to get context mutex: {}", e]
-        )
-    })?;
-
-    let start = Instant::now();
-    let reader;
-
-    loop {
-        match init_mxl_reader(&settings) {
-            Ok(r) => {
-                reader = r;
-                break;
-            }
-            Err(e) => {
-                if start.elapsed() >= Duration::from_secs(5) {
-                    return Err(e.into());
-                }
-                eprintln!(" Failed to init reader ({e}), retrying...");
-                std::thread::sleep(Duration::from_millis(250));
-            }
-        }
-    }
-    let binding = reader.get_info();
-    let reader_info = binding.as_ref();
-    let instance = init_mxl_instance(&settings).map_err(|e| {
-        gst::error_msg!(
-            gst::CoreError::Failed,
-            ["Failed to initialize MXL instance: {}", e]
-        )
-    })?;
-
-    let initial_info = InitialTime {
-        mxl_index: 0,
-        gst_time: ClockTime::from_mseconds(0),
-    };
-    if settings.video_flow.is_some() {
-        let grain_rate = reader_info
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to initialize MXL reader info: {}", e]
-                )
-            })?
-            .discrete_flow_info()
-            .map_err(|e| {
-                gst::error_msg!(
-                    gst::CoreError::Failed,
-                    ["Failed to initialize MXL discrete flow info: {}", e]
-                )
-            })?
-            .grainRate;
-        let grain_reader = reader.to_grain_reader().map_err(|e| {
-            gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to initialize MXL grain reader: {}", e]
-            )
-        })?;
-
-        context.state = Some(State {
-            instance: instance,
-            initial_info: initial_info,
-            video: Some(VideoState {
-                grain_rate: grain_rate,
-                frame_counter: 0,
-                is_initialized: false,
-                grain_reader: grain_reader,
-            }),
-            audio: None,
-        });
-    } else if settings.audio_flow.is_some() {
-        let reader_audio = init_mxl_reader(&settings)?;
-        let samples_reader = reader_audio.to_samples_reader().map_err(|e| {
-            gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to initialize MXL grain reader: {}", e]
-            )
-        })?;
-        context.state = Some(State {
-            instance,
-            initial_info,
-            video: None,
-            audio: Some(AudioState {
-                reader,
-                samples_reader,
-                batch_counter: 0,
-                is_initialized: false,
-                index: 0,
-                next_discont: false,
-            }),
-        });
-    }
-    Ok(())
-}
-
-fn init_mxl_instance(
-    settings: &MutexGuard<'_, Settings>,
-) -> Result<MxlInstance, gst::ErrorMessage> {
-    let mxl_api = mxl::load_api(get_mxl_so_path())
-        .map_err(|e| gst::error_msg!(gst::CoreError::Failed, ["Failed to load MXL API: {}", e]))?;
-
-    let mxl_instance =
-        mxl::MxlInstance::new(mxl_api, settings.domain.as_str(), "").map_err(|e| {
-            gst::error_msg!(
-                gst::CoreError::Failed,
-                ["Failed to load MXL instance: {}", e]
-            )
-        })?;
-
-    Ok(mxl_instance)
 }
 
 impl PushSrcImpl for MxlSrc {
