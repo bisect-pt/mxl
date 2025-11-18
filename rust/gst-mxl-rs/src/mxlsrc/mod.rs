@@ -12,6 +12,7 @@ use gst::glib;
 use gst::prelude::*;
 
 mod imp;
+mod tests;
 
 glib::wrapper! {
     pub struct MxlSrc(ObjectSubclass<imp::MxlSrc>) @extends gst_base::PushSrc, gst_base::BaseSrc, gst::Element, gst::Object;
