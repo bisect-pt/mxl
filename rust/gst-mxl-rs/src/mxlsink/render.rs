@@ -1,14 +1,13 @@
 use std::time::Instant;
 
+use crate::mxlsink::{self, state::InitialTime};
 use glib::subclass::types::ObjectSubclassExt;
 use gst::{prelude::*, ClockTime};
 use tracing::trace;
 
-use crate::mxlsink::{self, imp::*};
-
 pub(crate) fn video(
     mxlsink: &mxlsink::imp::MxlSink,
-    state: &mut mxlsink::imp::State,
+    state: &mut mxlsink::state::State,
     buffer: &gst::Buffer,
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
     let current_index = state.instance.get_current_index(
@@ -88,7 +87,7 @@ pub(crate) fn video(
 
 pub(crate) fn audio(
     mxlsink: &mxlsink::imp::MxlSink,
-    state: &mut mxlsink::imp::State,
+    state: &mut mxlsink::state::State,
     buffer: &gst::Buffer,
 ) -> Result<gst::FlowSuccess, gst::FlowError> {
     let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
@@ -122,7 +121,7 @@ pub(crate) fn audio(
 
     let _ = state
         .initial_time
-        .get_or_insert_with(|| mxlsink::imp::InitialTime {
+        .get_or_insert_with(|| mxlsink::state::InitialTime {
             index: current_index,
             gst_time,
         });
