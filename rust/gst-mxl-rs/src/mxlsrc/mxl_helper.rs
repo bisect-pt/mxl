@@ -8,7 +8,13 @@ use gst::ClockTime;
 use gst_base::prelude::*;
 use mxl::{config::get_mxl_so_path, MxlFlowReader, MxlInstance};
 
-use crate::{flowdef::*, mxlsrc::imp::*};
+use crate::{
+    flowdef::*,
+    mxlsrc::{
+        imp::*,
+        state::{AudioState, InitialTime, Settings, State, VideoState},
+    },
+};
 
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(

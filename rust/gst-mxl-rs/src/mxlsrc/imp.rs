@@ -14,12 +14,6 @@ use gst::subclass::prelude::*;
 use gst_base::prelude::*;
 use gst_base::subclass::base_src::CreateSuccess;
 use gst_base::subclass::prelude::*;
-
-use mxl::GrainReader;
-use mxl::MxlFlowReader;
-use mxl::MxlInstance;
-use mxl::Rational;
-use mxl::SamplesReader;
 use tracing::trace;
 
 use std::sync::LazyLock;
@@ -28,68 +22,18 @@ use std::sync::Mutex;
 use crate::mxlsrc;
 use crate::mxlsrc::create;
 use crate::mxlsrc::mxl_helper;
+use crate::mxlsrc::state::Context;
+use crate::mxlsrc::state::Settings;
+use crate::mxlsrc::state::DEFAULT_DOMAIN;
+use crate::mxlsrc::state::DEFAULT_FLOW_ID;
 
-static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
+pub(crate) static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
         "rssrc",
         gst::DebugColorFlags::empty(),
         Some("Rust MXL Source"),
     )
 });
-
-const DEFAULT_FLOW_ID: &str = "";
-const DEFAULT_DOMAIN: &str = "";
-
-#[derive(Debug, Default, Clone)]
-pub struct InitialTime {
-    pub mxl_index: u64,
-    pub gst_time: gst::ClockTime,
-}
-
-#[derive(Debug, Clone)]
-pub struct Settings {
-    pub video_flow: Option<String>,
-    pub audio_flow: Option<String>,
-    pub domain: String,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            video_flow: None,
-            audio_flow: None,
-            domain: DEFAULT_DOMAIN.to_owned(),
-        }
-    }
-}
-
-pub struct State {
-    pub instance: MxlInstance,
-    pub initial_info: InitialTime,
-    pub video: Option<VideoState>,
-    pub audio: Option<AudioState>,
-}
-
-pub struct VideoState {
-    pub grain_rate: Rational,
-    pub frame_counter: u64,
-    pub is_initialized: bool,
-    pub grain_reader: GrainReader,
-}
-
-pub struct AudioState {
-    pub reader: MxlFlowReader,
-    pub samples_reader: SamplesReader,
-    pub batch_counter: u64,
-    pub is_initialized: bool,
-    pub index: u64,
-    pub next_discont: bool,
-}
-
-#[derive(Default)]
-pub struct Context {
-    pub state: Option<State>,
-}
 
 struct ClockWait {
     clock_id: Option<gst::SingleShotClockId>,

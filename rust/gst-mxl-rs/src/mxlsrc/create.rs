@@ -1,6 +1,7 @@
 use std::time::{Instant, SystemTime};
 
-use crate::mxlsrc::imp::{InitialTime, MxlSrc, State};
+use crate::mxlsrc::imp::MxlSrc;
+use crate::mxlsrc::state::{InitialTime, State};
 use glib::subclass::types::ObjectSubclassExt;
 use gst::prelude::*;
 use gst_base::subclass::base_src::CreateSuccess;
