@@ -14,6 +14,7 @@ use gst::prelude::*;
 mod create;
 mod imp;
 mod mxl_helper;
+mod state;
 mod tests;
 
 glib::wrapper! {
