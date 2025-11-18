@@ -11,6 +11,7 @@
 use gst::glib;
 use gst::prelude::*;
 
+mod create;
 mod imp;
 mod mxl_helper;
 mod tests;
