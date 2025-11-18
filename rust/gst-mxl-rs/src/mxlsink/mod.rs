@@ -13,6 +13,7 @@ use gst::prelude::*;
 
 mod imp;
 mod render;
+mod state;
 mod tests;
 
 glib::wrapper! {
