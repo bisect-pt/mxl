@@ -187,43 +187,48 @@ impl ElementImpl for MxlSink {
         Some(&*ELEMENT_METADATA)
     }
     fn pad_templates() -> &'static [gst::PadTemplate] {
-        use std::sync::LazyLock;
+        static PAD_TEMPLATES: LazyLock<Result<Vec<gst::PadTemplate>, glib::BoolError>> =
+            LazyLock::new(|| {
+                let mut caps = gst::Caps::new_empty();
+                {
+                    let caps_mut = caps.make_mut();
 
-        static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
-            let mut caps = gst::Caps::new_empty();
-            {
-                let caps_mut = caps.make_mut();
-
-                caps_mut.append(
-                    gst::Caps::builder("video/x-raw")
-                        .field("format", "v210")
-                        .build(),
-                );
-                for ch in 1..64 {
-                    let mask = gst::Bitmask::from((1u64 << ch) - 1);
-                    caps.make_mut().append(
-                        gst::Caps::builder("audio/x-raw")
-                            .field("format", "F32LE")
-                            .field("layout", "interleaved")
-                            .field("channels", ch)
-                            .field("channel-mask", mask)
+                    caps_mut.append(
+                        gst::Caps::builder("video/x-raw")
+                            .field("format", "v210")
                             .build(),
                     );
+                    for ch in 1..64 {
+                        let mask = gst::Bitmask::from((1u64 << ch) - 1);
+                        caps.make_mut().append(
+                            gst::Caps::builder("audio/x-raw")
+                                .field("format", "F32LE")
+                                .field("layout", "interleaved")
+                                .field("channels", ch)
+                                .field("channel-mask", mask)
+                                .build(),
+                        );
+                    }
                 }
+
+                let sink_pad_template = gst::PadTemplate::new(
+                    "sink",
+                    gst::PadDirection::Sink,
+                    gst::PadPresence::Always,
+                    &caps,
+                )?;
+
+                Ok(vec![sink_pad_template])
+            });
+
+        match PAD_TEMPLATES.as_ref() {
+            Ok(templates) => templates,
+            Err(err) => {
+                trace!("Failed to create pad templates: {:?}", err);
+                &[]
             }
-
-            let sink_pad_template = gst::PadTemplate::new(
-                "sink",
-                gst::PadDirection::Sink,
-                gst::PadPresence::Always,
-                &caps,
-            )
-            .expect("Failed to create sink pad template");
-            vec![sink_pad_template]
-        });
-        PAD_TEMPLATES.as_ref()
+        }
     }
-
     fn change_state(
         &self,
         transition: gst::StateChange,

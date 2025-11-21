@@ -192,22 +192,27 @@ impl ElementImpl for MxlSrc {
     }
 
     fn pad_templates() -> &'static [gst::PadTemplate] {
-        use std::sync::LazyLock;
+        static PAD_TEMPLATES: LazyLock<Result<Vec<gst::PadTemplate>, glib::BoolError>> =
+            LazyLock::new(|| {
+                let caps = gst::Caps::new_any();
 
-        static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
-            let caps = gst::Caps::new_any();
-            let src_pad_template = gst::PadTemplate::new(
-                "src",
-                gst::PadDirection::Src,
-                gst::PadPresence::Always,
-                &caps,
-            )
-            .expect("Failed to create src pad template");
+                let src_pad_template = gst::PadTemplate::new(
+                    "src",
+                    gst::PadDirection::Src,
+                    gst::PadPresence::Always,
+                    &caps,
+                )?;
 
-            vec![src_pad_template]
-        });
+                Ok(vec![src_pad_template])
+            });
 
-        PAD_TEMPLATES.as_ref()
+        match PAD_TEMPLATES.as_ref() {
+            Ok(templates) => templates,
+            Err(err) => {
+                trace!("Failed to create src pad template: {:?}", err);
+                &[]
+            }
+        }
     }
 
     fn change_state(
