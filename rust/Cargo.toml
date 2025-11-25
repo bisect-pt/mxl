@@ -18,6 +18,7 @@ bindgen = { version = "0.72", features = ["experimental"] }
 dlopen2 = "0.8"
 # Will be used later, when we get to higher level streams based interfaces.
 futures = "0.3"
+libloading = { version = "0.8.9" }
 thiserror = "2.0.12"
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "std"] }

@@ -12,6 +12,7 @@ license.workspace = true
 mxl-sys = { path = "../mxl-sys" }
 
 dlopen2.workspace = true
+libloading.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true

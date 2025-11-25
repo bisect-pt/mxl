@@ -3,7 +3,7 @@
 
 #[test]
 fn there_is_bindgen_generated_code() {
-    let mxl_version = mxl_sys::mxlVersionType {
+    let mxl_version = mxl_sys::VersionType {
         major: 3,
         minor: 2,
         bugfix: 1,

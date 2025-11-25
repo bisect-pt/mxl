@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2025 2025 Contributors to the Media eXchange Layer project.
 // SPDX-License-Identifier: Apache-2.0
 
+use bindgen::callbacks::ParseCallbacks;
 use std::env;
 use std::path::PathBuf;
 
@@ -78,6 +79,9 @@ fn main() {
         .derive_default(true)
         .derive_debug(true)
         .prepend_enum_name(false)
+        .dynamic_library_name("libmxl")
+        .dynamic_link_require_all(true)
+        .parse_callbacks(Box::new(CB))
         .generate()
         .unwrap();
 
@@ -85,4 +89,39 @@ fn main() {
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Could not write bindings");
+}
+
+#[derive(Debug)]
+struct CB;
+
+impl ParseCallbacks for CB {
+    fn item_name(&self, item_info: bindgen::callbacks::ItemInfo) -> Option<String> {
+        match item_info.kind {
+            bindgen::callbacks::ItemKind::Function => {
+                Some(to_snake_case(&item_info.name.replace("mxl", "")))
+            }
+
+            bindgen::callbacks::ItemKind::Type => Some(item_info.name.replace("mxl", "")),
+
+            _ => None,
+        }
+    }
+}
+
+/// Convert a CamelCase string to snake_case
+fn to_snake_case(s: &str) -> String {
+    let mut out = String::new();
+
+    for c in s.chars() {
+        if c.is_uppercase() {
+            if !out.is_empty() {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+
+    out
 }
