@@ -15,7 +15,6 @@ license-file = "../LICENSE.txt"
 
 [workspace.dependencies]
 bindgen = { version = "0.72", features = ["experimental"] }
-dlopen2 = "0.8"
 # Will be used later, when we get to higher level streams based interfaces.
 futures = "0.3"
 libloading = { version = "0.8.9" }

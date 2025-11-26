@@ -27,9 +27,6 @@ pub enum Error {
     #[error("Other error: {0}")]
     Other(String),
 
-    #[error("dlopen: {0}")]
-    DlOpen(#[from] dlopen2::Error),
-
     #[error("Null string: {0}")]
     NulString(#[from] std::ffi::NulError),
 
