@@ -10,7 +10,7 @@ use crate::{Error, Result, instance::InstanceContext};
 /// MXL Flow Writer for discrete flows (grain-based data like video frames)
 pub struct GrainWriter {
     context: Arc<InstanceContext>,
-    writer: mxl_sys::mxlFlowWriter,
+    writer: mxl_sys::FlowWriter,
 }
 
 /// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
@@ -18,7 +18,7 @@ pub struct GrainWriter {
 unsafe impl Send for GrainWriter {}
 
 impl GrainWriter {
-    pub(crate) fn new(context: Arc<InstanceContext>, writer: mxl_sys::mxlFlowWriter) -> Self {
+    pub(crate) fn new(context: Arc<InstanceContext>, writer: mxl_sys::FlowWriter) -> Self {
         Self { context, writer }
     }
 
@@ -31,7 +31,7 @@ impl GrainWriter {
     /// multiple grains. If the TODO ever gets removed, it may be worth considering pattern where
     /// opening grain would consume the writer and then return it back on commit or cancel.
     pub fn open_grain<'a>(&'a self, index: u64) -> Result<GrainWriteAccess<'a>> {
-        let mut grain_info: mxl_sys::mxlGrainInfo = unsafe { std::mem::zeroed() };
+        let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         unsafe {
             Error::from_status(self.context.api.flow_writer_open_grain(

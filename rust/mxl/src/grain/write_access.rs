@@ -12,8 +12,8 @@ use crate::{Error, Result, instance::InstanceContext};
 /// Automatically cancels the grain if not explicitly committed.
 pub struct GrainWriteAccess<'a> {
     context: Arc<InstanceContext>,
-    writer: mxl_sys::mxlFlowWriter,
-    grain_info: mxl_sys::mxlGrainInfo,
+    writer: mxl_sys::FlowWriter,
+    grain_info: mxl_sys::GrainInfo,
     payload_ptr: *mut u8,
     /// Serves as a flag to know whether to cancel the grain on drop.
     committed_or_canceled: bool,
@@ -23,8 +23,8 @@ pub struct GrainWriteAccess<'a> {
 impl<'a> GrainWriteAccess<'a> {
     pub(crate) fn new(
         context: Arc<InstanceContext>,
-        writer: mxl_sys::mxlFlowWriter,
-        grain_info: mxl_sys::mxlGrainInfo,
+        writer: mxl_sys::FlowWriter,
+        grain_info: mxl_sys::GrainInfo,
         payload_ptr: *mut u8,
     ) -> Self {
         Self {

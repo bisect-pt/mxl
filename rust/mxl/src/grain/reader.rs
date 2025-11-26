@@ -14,7 +14,7 @@ use crate::{
 
 pub struct GrainReader {
     context: Arc<InstanceContext>,
-    reader: mxl_sys::mxlFlowReader,
+    reader: mxl_sys::FlowReader,
 }
 
 /// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
@@ -22,7 +22,7 @@ pub struct GrainReader {
 unsafe impl Send for GrainReader {}
 
 impl GrainReader {
-    pub(crate) fn new(context: Arc<InstanceContext>, reader: mxl_sys::mxlFlowReader) -> Self {
+    pub(crate) fn new(context: Arc<InstanceContext>, reader: mxl_sys::FlowReader) -> Self {
         Self { context, reader }
     }
 
@@ -40,7 +40,7 @@ impl GrainReader {
         get_config_info(&self.context, self.reader)
     }
 
-    pub fn get_runtime_info(&self) -> Result<mxl_sys::mxlFlowRuntimeInfo> {
+    pub fn get_runtime_info(&self) -> Result<mxl_sys::FlowRuntimeInfo> {
         get_runtime_info(&self.context, self.reader)
     }
 
@@ -49,7 +49,7 @@ impl GrainReader {
         index: u64,
         timeout: Duration,
     ) -> Result<GrainData<'a>> {
-        let mut grain_info: mxl_sys::mxlGrainInfo = unsafe { std::mem::zeroed() };
+        let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         let timeout_ns = timeout.as_nanos() as u64;
         loop {
@@ -89,7 +89,7 @@ impl GrainReader {
     /// Non-blocking version of `get_complete_grain`. If the grain is not available, returns an error.
     /// If the grain is partial, it is returned as is and the payload length will be smaller than the total grain size.
     pub fn get_grain_non_blocking<'a>(&'a self, index: u64) -> Result<GrainData<'a>> {
-        let mut grain_info: mxl_sys::mxlGrainInfo = unsafe { std::mem::zeroed() };
+        let mut grain_info: mxl_sys::GrainInfo = unsafe { std::mem::zeroed() };
         let mut payload_ptr: *mut u8 = std::ptr::null_mut();
         unsafe {
             Error::from_status(self.context.api.flow_reader_get_grain_non_blocking(

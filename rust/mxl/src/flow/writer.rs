@@ -13,7 +13,7 @@ use crate::{
 /// data like video frames or meta) or "continuous" (audio samples) flow writers in MXL terminology.
 pub struct FlowWriter {
     context: Arc<InstanceContext>,
-    writer: mxl_sys::mxlFlowWriter,
+    writer: mxl_sys::FlowWriter,
     id: uuid::Uuid,
 }
 
@@ -24,7 +24,7 @@ unsafe impl Send for FlowWriter {}
 impl FlowWriter {
     pub(crate) fn new(
         context: Arc<InstanceContext>,
-        writer: mxl_sys::mxlFlowWriter,
+        writer: mxl_sys::FlowWriter,
         id: uuid::Uuid,
     ) -> Self {
         Self {
@@ -38,7 +38,7 @@ impl FlowWriter {
         let flow_type = self.get_flow_type()?;
         if !is_discrete_data_format(flow_type) {
             return Err(Error::Other(format!(
-                "Cannot convert MxlFlowWriter to GrainWriter for continuous flow of type \"{:?}\".",
+                "Cannot convert FlowWriter to GrainWriter for continuous flow of type \"{:?}\".",
                 DataFormat::from(flow_type)
             )));
         }
@@ -51,7 +51,7 @@ impl FlowWriter {
         let flow_type = self.get_flow_type()?;
         if is_discrete_data_format(flow_type) {
             return Err(Error::Other(format!(
-                "Cannot convert MxlFlowWriter to SamplesWriter for discrete flow of type \"{:?}\".",
+                "Cannot convert FlowWriter to SamplesWriter for discrete flow of type \"{:?}\".",
                 DataFormat::from(flow_type)
             )));
         }

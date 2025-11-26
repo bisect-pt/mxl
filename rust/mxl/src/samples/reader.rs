@@ -14,7 +14,7 @@ use crate::{
 
 pub struct SamplesReader {
     context: Arc<InstanceContext>,
-    reader: mxl_sys::mxlFlowReader,
+    reader: mxl_sys::FlowReader,
 }
 
 /// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
@@ -22,7 +22,7 @@ pub struct SamplesReader {
 unsafe impl Send for SamplesReader {}
 
 impl SamplesReader {
-    pub(crate) fn new(context: Arc<InstanceContext>, reader: mxl_sys::mxlFlowReader) -> Self {
+    pub(crate) fn new(context: Arc<InstanceContext>, reader: mxl_sys::FlowReader) -> Self {
         Self { context, reader }
     }
 
@@ -40,7 +40,7 @@ impl SamplesReader {
         get_config_info(&self.context, self.reader)
     }
 
-    pub fn get_runtime_info(&self) -> Result<mxl_sys::mxlFlowRuntimeInfo> {
+    pub fn get_runtime_info(&self) -> Result<mxl_sys::FlowRuntimeInfo> {
         get_runtime_info(&self.context, self.reader)
     }
 
@@ -51,7 +51,7 @@ impl SamplesReader {
         timeout: Duration,
     ) -> Result<SamplesData<'_>> {
         let timeout_ns = timeout.as_nanos() as u64;
-        let mut buffer_slice: mxl_sys::mxlWrappedMultiBufferSlice = unsafe { std::mem::zeroed() };
+        let mut buffer_slice: mxl_sys::WrappedMultiBufferSlice = unsafe { std::mem::zeroed() };
         unsafe {
             Error::from_status(self.context.api.flow_reader_get_samples(
                 self.reader,
@@ -65,7 +65,7 @@ impl SamplesReader {
     }
 
     pub fn get_samples_non_blocking(&self, index: u64, count: usize) -> Result<SamplesData<'_>> {
-        let mut buffer_slice: mxl_sys::mxlWrappedMultiBufferSlice = unsafe { std::mem::zeroed() };
+        let mut buffer_slice: mxl_sys::WrappedMultiBufferSlice = unsafe { std::mem::zeroed() };
         unsafe {
             Error::from_status(self.context.api.flow_reader_get_samples_non_blocking(
                 self.reader,

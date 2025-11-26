@@ -8,7 +8,7 @@ use crate::{Error, Result, SamplesWriteAccess, instance::InstanceContext};
 /// MXL Flow Writer for continuous flows (samples-based data like audio)
 pub struct SamplesWriter {
     context: Arc<InstanceContext>,
-    writer: mxl_sys::mxlFlowWriter,
+    writer: mxl_sys::FlowWriter,
 }
 
 /// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
@@ -16,7 +16,7 @@ pub struct SamplesWriter {
 unsafe impl Send for SamplesWriter {}
 
 impl SamplesWriter {
-    pub(crate) fn new(context: Arc<InstanceContext>, writer: mxl_sys::mxlFlowWriter) -> Self {
+    pub(crate) fn new(context: Arc<InstanceContext>, writer: mxl_sys::FlowWriter) -> Self {
         Self { context, writer }
     }
 
@@ -25,7 +25,7 @@ impl SamplesWriter {
     }
 
     pub fn open_samples<'a>(&'a self, index: u64, count: usize) -> Result<SamplesWriteAccess<'a>> {
-        let mut buffer_slice: mxl_sys::mxlMutableWrappedMultiBufferSlice =
+        let mut buffer_slice: mxl_sys::MutableWrappedMultiBufferSlice =
             unsafe { std::mem::zeroed() };
         unsafe {
             Error::from_status(self.context.api.flow_writer_open_samples(

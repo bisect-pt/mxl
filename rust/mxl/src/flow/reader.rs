@@ -11,7 +11,7 @@ use crate::{
 
 pub struct FlowReader {
     context: Arc<InstanceContext>,
-    reader: mxl_sys::mxlFlowReader,
+    reader: mxl_sys::FlowReader,
 }
 
 /// The MXL readers and writers are not thread-safe, so we do not implement `Sync` for them, but
@@ -20,9 +20,9 @@ unsafe impl Send for FlowReader {}
 
 pub(crate) fn get_flow_info(
     context: &Arc<InstanceContext>,
-    reader: mxl_sys::mxlFlowReader,
+    reader: mxl_sys::FlowReader,
 ) -> Result<FlowInfo> {
-    let mut flow_info: mxl_sys::mxlFlowInfo = unsafe { std::mem::zeroed() };
+    let mut flow_info: mxl_sys::FlowInfo = unsafe { std::mem::zeroed() };
     unsafe {
         Error::from_status(context.api.flow_reader_get_info(reader, &mut flow_info))?;
     }
@@ -38,9 +38,9 @@ pub(crate) fn get_flow_info(
 
 pub(crate) fn get_config_info(
     context: &Arc<InstanceContext>,
-    reader: mxl_sys::mxlFlowReader,
+    reader: mxl_sys::FlowReader,
 ) -> Result<FlowConfigInfo> {
-    let mut config_info: mxl_sys::mxlFlowConfigInfo = unsafe { std::mem::zeroed() };
+    let mut config_info: mxl_sys::FlowConfigInfo = unsafe { std::mem::zeroed() };
     unsafe {
         Error::from_status(
             context
@@ -53,9 +53,9 @@ pub(crate) fn get_config_info(
 
 pub(crate) fn get_runtime_info(
     context: &Arc<InstanceContext>,
-    reader: mxl_sys::mxlFlowReader,
-) -> Result<mxl_sys::mxlFlowRuntimeInfo> {
-    let mut runtime_info: mxl_sys::mxlFlowRuntimeInfo = unsafe { std::mem::zeroed() };
+    reader: mxl_sys::FlowReader,
+) -> Result<mxl_sys::FlowRuntimeInfo> {
+    let mut runtime_info: mxl_sys::FlowRuntimeInfo = unsafe { std::mem::zeroed() };
     unsafe {
         Error::from_status(
             context
@@ -67,7 +67,7 @@ pub(crate) fn get_runtime_info(
 }
 
 impl FlowReader {
-    pub(crate) fn new(context: Arc<InstanceContext>, reader: mxl_sys::mxlFlowReader) -> Self {
+    pub(crate) fn new(context: Arc<InstanceContext>, reader: mxl_sys::FlowReader) -> Self {
         Self { context, reader }
     }
 
@@ -79,7 +79,7 @@ impl FlowReader {
         let flow_type = self.get_info()?.config.value.common.format;
         if !is_discrete_data_format(flow_type) {
             return Err(Error::Other(format!(
-                "Cannot convert MxlFlowReader to GrainReader for continuous flow of type \"{:?}\".",
+                "Cannot convert FlowReader to GrainReader for continuous flow of type \"{:?}\".",
                 DataFormat::from(flow_type)
             )));
         }
@@ -92,7 +92,7 @@ impl FlowReader {
         let flow_type = self.get_info()?.config.value.common.format;
         if is_discrete_data_format(flow_type) {
             return Err(Error::Other(format!(
-                "Cannot convert MxlFlowReader to SamplesReader for discrete flow of type \"{:?}\".",
+                "Cannot convert FlowReader to SamplesReader for discrete flow of type \"{:?}\".",
                 DataFormat::from(flow_type)
             )));
         }
