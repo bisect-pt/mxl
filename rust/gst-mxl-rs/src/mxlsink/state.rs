@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::Deref};
 
 use gst::StructureRef;
 use gst_audio::AudioInfo;
-use mxl::{FlowInfo, GrainWriter, MxlInstance, Rational, SamplesWriter};
+use mxl::{FlowConfigInfo, GrainWriter, MxlInstance, Rational, SamplesWriter};
 use tracing::trace;
 
 use crate::{
@@ -30,7 +30,7 @@ impl Default for Settings {
 
 pub(crate) struct State {
     pub instance: MxlInstance,
-    pub flow: Option<FlowInfo>,
+    pub flow: Option<FlowConfigInfo>,
     pub video: Option<VideoState>,
     pub audio: Option<AudioState>,
     pub initial_time: Option<InitialTime>,
@@ -197,11 +197,11 @@ pub(crate) fn init_state_with_video(
         )
         .map_err(|e| gst::loggable_error!(CAT, "Failed to create flow: {}", e))?;
     let grain_rate = flow
-        .discrete_flow_info()
-        .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain rate: {}", e))?
-        .grainRate;
+        .common()
+        .grain_rate()
+        .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain rate: {}", e))?;
     let grain_count = flow
-        .discrete_flow_info()
+        .discrete()
         .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain count: {}", e))?
         .grainCount;
     let writer = instance
@@ -210,9 +210,9 @@ pub(crate) fn init_state_with_video(
         .to_grain_writer()
         .map_err(|e| gst::loggable_error!(CAT, "Failed to create grain writer: {}", e))?;
     let rate = flow
-        .discrete_flow_info()
-        .map_err(|_| gst::loggable_error!(CAT, "Failed to get instance: is None"))?
-        .grainRate;
+        .common()
+        .grain_rate()
+        .map_err(|e| gst::loggable_error!(CAT, "Failed to get grain rate: {}", e))?;
     let index = instance.get_current_index(&rate);
     state.video = Some(VideoState {
         writer: writer,

@@ -15,9 +15,9 @@ pub(crate) fn video(
             .flow
             .as_ref()
             .ok_or(gst::FlowError::Error)?
-            .discrete_flow_info()
-            .map_err(|_| gst::FlowError::Error)?
-            .grainRate,
+            .common()
+            .grain_rate()
+            .map_err(|_| gst::FlowError::Error)?,
     );
     let video_state = state.video.as_mut().ok_or(gst::FlowError::Error)?;
     let gst_time = mxlsink
@@ -73,7 +73,7 @@ pub(crate) fn video(
     let commit_time = Instant::now();
     payload[..copy_len].copy_from_slice(&data[..copy_len]);
     access
-        .commit(copy_len as u32)
+        .commit(copy_len as u16)
         .map_err(|_| gst::FlowError::Error)?;
     trace!(
         "Commit time: {}us of grain: {}",
@@ -108,10 +108,11 @@ pub(crate) fn audio(
     audio_state.batch_size = samples_per_buffer;
 
     let flow = state.flow.as_ref().ok_or(gst::FlowError::Error)?;
-    let flow_info = flow
-        .continuous_flow_info()
+    let flow_info = flow.continuous().map_err(|_| gst::FlowError::Error)?;
+    let sample_rate = flow
+        .common()
+        .sample_rate()
         .map_err(|_| gst::FlowError::Error)?;
-    let sample_rate = flow_info.sampleRate;
     let buffer_length = flow_info.bufferLength as u64;
     let current_index = state.instance.get_current_index(&sample_rate);
     let gst_time = mxlsink

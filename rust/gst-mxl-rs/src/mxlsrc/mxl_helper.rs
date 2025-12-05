@@ -6,7 +6,7 @@ use std::{
 use glib::subclass::types::ObjectSubclassExt;
 use gst::ClockTime;
 use gst_base::prelude::*;
-use mxl::{config::get_mxl_so_path, MxlFlowReader, MxlInstance};
+use mxl::{config::get_mxl_so_path, FlowReader, MxlInstance};
 
 use crate::{
     flowdef::*,
@@ -47,7 +47,7 @@ pub(crate) fn get_mxl_flow_json(
     domain: &String,
     flow_id: &String,
 ) -> Result<serde_json::Value, gst::LoggableError> {
-    let json_path = format!("{}/{}.mxl-flow/.json", domain, flow_id);
+    let json_path = format!("{}/{}.mxl-flow/flow_def.json", domain, flow_id);
     let data = std::fs::read_to_string(&json_path)
         .map_err(|e| gst::loggable_error!(CAT, "Failed to read JSON: {}", e))?;
     let serde_json: serde_json::Value = serde_json::from_str(&data)
@@ -149,9 +149,7 @@ pub(crate) fn generate_channel_mask_from_channels(channels: u32) -> gst::Bitmask
     gst::Bitmask::new(mask)
 }
 
-fn init_mxl_reader(
-    settings: &MutexGuard<'_, Settings>,
-) -> Result<MxlFlowReader, gst::ErrorMessage> {
+fn init_mxl_reader(settings: &MutexGuard<'_, Settings>) -> Result<FlowReader, gst::ErrorMessage> {
     let mxl_instance = init_mxl_instance(settings)?;
     let reader = if settings.video_flow.is_some() {
         let reader = mxl_instance
@@ -248,14 +246,15 @@ pub(crate) fn init(mxlsrc: &MxlSrc) -> Result<(), gst::ErrorMessage> {
                     ["Failed to initialize MXL reader info: {}", e]
                 )
             })?
-            .discrete_flow_info()
+            .config
+            .common()
+            .grain_rate()
             .map_err(|e| {
                 gst::error_msg!(
                     gst::CoreError::Failed,
                     ["Failed to initialize MXL discrete flow info: {}", e]
                 )
-            })?
-            .grainRate;
+            })?;
         let grain_reader = reader.to_grain_reader().map_err(|e| {
             gst::error_msg!(
                 gst::CoreError::Failed,

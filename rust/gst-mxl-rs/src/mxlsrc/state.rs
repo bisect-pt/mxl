@@ -1,4 +1,4 @@
-use mxl::{GrainReader, MxlFlowReader, MxlInstance, Rational, SamplesReader};
+use mxl::{FlowReader, GrainReader, MxlInstance, Rational, SamplesReader};
 
 pub(crate) const DEFAULT_FLOW_ID: &str = "";
 pub(crate) const DEFAULT_DOMAIN: &str = "";
@@ -41,7 +41,7 @@ pub struct VideoState {
 }
 
 pub struct AudioState {
-    pub reader: MxlFlowReader,
+    pub reader: FlowReader,
     pub samples_reader: SamplesReader,
     pub batch_counter: u64,
     pub is_initialized: bool,

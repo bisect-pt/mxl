@@ -155,10 +155,15 @@ pub(crate) fn create_audio(
         .reader
         .get_info()
         .map_err(|_| gst::FlowError::Error)?;
-    let mut reader_info_cont = reader_info
-        .continuous_flow_info()
+    let reader_info_cont = reader_info
+        .config
+        .continuous()
         .map_err(|_| gst::FlowError::Error)?;
-    let sample_rate = reader_info_cont.sampleRate;
+    let sample_rate = reader_info
+        .config
+        .common()
+        .sample_rate()
+        .map_err(|_| gst::FlowError::Error)?;
 
     let batch_size = DEFAULT_BATCH_SIZE.min(reader_info_cont.bufferLength / 2);
     let ring = reader_info_cont.bufferLength as u64;
@@ -173,12 +178,12 @@ pub(crate) fn create_audio(
             mxl_index: state.instance.get_time(),
             gst_time: ts_gst,
         };
-        audio_state.index = reader_info_cont.headIndex.saturating_sub(batch);
+        audio_state.index = reader_info.runtime.head_index().saturating_sub(batch);
         audio_state.is_initialized = true;
         audio_state.batch_counter = 0;
     }
 
-    let mut head = reader_info_cont.headIndex as u64;
+    let mut head = reader_info.runtime.head_index() as u64;
     while audio_state.index + batch > head {
         trace!(
             "Reader ahead: index {} + batch {} > head {} (waiting for producer)",
@@ -190,10 +195,7 @@ pub(crate) fn create_audio(
             .reader
             .get_info()
             .map_err(|_| gst::FlowError::Error)?;
-        reader_info_cont = reader_info
-            .continuous_flow_info()
-            .map_err(|_| gst::FlowError::Error)?;
-        head = reader_info_cont.headIndex as u64;
+        head = reader_info.runtime.head_index() as u64;
     }
 
     let oldest_valid = head.saturating_sub(ring.saturating_sub(batch));
@@ -217,7 +219,11 @@ pub(crate) fn create_audio(
         audio_state.next_discont = true;
     }
 
-    let read_once = |idx: u64| audio_state.samples_reader.get_samples(idx, batch as usize);
+    let read_once = |idx: u64| {
+        audio_state
+            .samples_reader
+            .get_samples_non_blocking(idx, batch as usize)
+    };
 
     let samples = match read_once(audio_state.index) {
         Ok(s) => s,
@@ -226,10 +232,7 @@ pub(crate) fn create_audio(
                 .reader
                 .get_info()
                 .map_err(|_| gst::FlowError::Error)?;
-            reader_info_cont = reader_info
-                .continuous_flow_info()
-                .map_err(|_| gst::FlowError::Error)?;
-            head = reader_info_cont.headIndex as u64;
+            head = reader_info.runtime.head_index() as u64;
 
             let cushion = batch.saturating_mul(2);
             let target = head.saturating_sub(cushion);

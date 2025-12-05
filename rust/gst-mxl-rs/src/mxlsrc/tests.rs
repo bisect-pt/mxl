@@ -30,7 +30,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    //#[ignore]
     #[cfg_attr(feature = "tracing", tracing_test::traced_test)]
     fn negotiate_caps() -> Result<(), glib::Error> {
         gst::init()?;
@@ -49,7 +49,7 @@ mod tests {
 
         let pipeline = gst::Pipeline::new();
         let src = gst::ElementFactory::make("mxlsrc")
-            .property("flow-id", "9fbec3b1-1b0f-417d-9059-8b94a47197ed")
+            .property("video-flow", "9fbec3b1-1b0f-417d-9059-8b94a47197ed")
             .property("domain", "/mnt/mxl/domain_1")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
@@ -62,7 +62,7 @@ mod tests {
         let queue2 = gst::ElementFactory::make("queue")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
-        let sink = gst::ElementFactory::make("autovideosink")
+        let sink = gst::ElementFactory::make("fakesink")
             .build()
             .map_err(|e| glib::Error::new(CoreError::Failed, &e.message))?;
 
@@ -85,7 +85,7 @@ mod tests {
         } else {
             trace!("No negotiated caps found");
         }
-        std::thread::sleep(std::time::Duration::from_millis(100000));
+        std::thread::sleep(std::time::Duration::from_millis(1000));
         pipeline
             .set_state(gst::State::Null)
             .map_err(|_| glib::Error::new(CoreError::Failed, "State change failed"))?;
