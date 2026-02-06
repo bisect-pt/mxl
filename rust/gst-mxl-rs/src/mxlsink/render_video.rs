@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2025 2025 Contributors to the Media eXchange Layer project.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time::Duration;
+
 use crate::mxlsink::{self, state::InitialTime};
 
 use glib::subclass::types::ObjectSubclassExt;
@@ -56,7 +58,24 @@ pub(crate) fn video(
             video_state.grain_index = current_index;
         }
     }
+    trace!("BUFFER PTS VIDEO: {:#?}", buffer.pts());
+    trace!(
+        "MXL TIME: {:#?}",
+        (ClockTime::from_nseconds(state.instance.get_time())) - initial_info.mxl_to_gst_offset
+    );
+    let one_frame = ClockTime::from_seconds(
+        (1 / (video_state.grain_rate.numerator / video_state.grain_rate.denominator)) as u64,
+    );
+    let mxl_time =
+        (ClockTime::from_nseconds(state.instance.get_time())) - initial_info.mxl_to_gst_offset;
+    let time_ahead = buffer
+        .pts()
+        .ok_or(gst::FlowError::Error)?
+        .saturating_sub(mxl_time);
 
+    if time_ahead > one_frame {
+        std::thread::sleep(Duration::from(time_ahead - one_frame));
+    }
     commit_buffer(buffer, video_state, index)?;
     video_state.grain_index += 1;
     trace!("END RENDER");
