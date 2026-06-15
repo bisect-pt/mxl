@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
+
+# Avoid racing with the mike-based Documentation workflow, which also pushes
+# to gh-pages.
+concurrency:
+  group: gh-pages
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -18,29 +22,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Doxygen
+      - name: Install Doxygen and Graphviz
         run: |
           sudo apt-get update
           sudo apt-get install -y doxygen graphviz
 
-      - name: Generate docs
+      - name: Fetch doxygen-awesome-css
         run: |
-          doxygen Doxyfile.in
+          mkdir -p third_party
+          curl -fsSL -o third_party/doxygen-awesome.zip \
+            https://github.com/jothepro/doxygen-awesome-css/archive/refs/heads/main.zip
+          unzip -q third_party/doxygen-awesome.zip -d third_party
+          mv third_party/doxygen-awesome-css-main third_party/doxygen-awesome-css
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Generate Doxyfile from template
+        run: |
+          # Doxyfile.in is a CMake configure_file template. Substitute the
+          # two @VAR@ placeholders that the CMake build would normally fill in.
+          sed \
+            -e "s|@CMAKE_CURRENT_SOURCE_DIR@|${GITHUB_WORKSPACE}|g" \
+            -e "s|@AWESOME_CSS_DIR@|${GITHUB_WORKSPACE}/third_party/doxygen-awesome-css|g" \
+            Doxyfile.in > Doxyfile
+
+      - name: Generate docs
+        run: doxygen Doxyfile
+
+      # Publish into the gh-pages branch alongside the mike-managed site.
+      # keep_files: true preserves the versioned docs (latest/, vX.Y.Z/,
+      # versions.json, ...) maintained by .github/workflows/docs.yml.
+      - name: Deploy to gh-pages (api/ subdirectory)
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: html
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: docs/html
+          destination_dir: api
+          keep_files: true
+          commit_message: "doxygen: update api docs (${{ github.sha }})"
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
