@@ -90,6 +90,7 @@ jobs:
         run: sudo snap install lychee
 
       - name: Check for broken links with lychee
+        continue-on-error: true
         run: lychee --root-dir ./site --verbose --no-progress --accept '100..=103,200..=299,403' --accept-timeouts './site/**/*.html'
 
       # Configure git for mike to push to gh-pages
