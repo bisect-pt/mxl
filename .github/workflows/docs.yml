@@ -8,6 +8,15 @@ on:
     branches:
       - main
       - docs-* # for testing
+    # Only run on branch pushes that change inputs to this site. Tag pushes
+    # are handled by the separate `tags:` filter below and are not subject to
+    # `paths:` (GitHub treats a new ref as "all files changed").
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "zensical.toml"
+      - ".github/scripts/prepare-docs.sh"
+      - ".github/workflows/docs.yml"
     tags:
       - "v*"
   workflow_dispatch:

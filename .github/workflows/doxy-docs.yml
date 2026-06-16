@@ -8,6 +8,15 @@ on:
     branches:
       - main
       - docs-* # for testing
+    # Only run on branch pushes that change inputs to the API reference
+    # (the C/C++ sources or this workflow's own configuration). Tag pushes
+    # are handled by the `tags:` filter below and are not subject to
+    # `paths:` (GitHub treats a new ref as "all files changed").
+    paths:
+      - "lib/**"
+      - "Doxyfile.in"
+      - ".github/doxygen/**"
+      - ".github/workflows/doxy-docs.yml"
     tags:
       - "v*"
   workflow_dispatch:
@@ -38,22 +47,19 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      # Always check out the ref that triggered the run (or the default
-      # branch, for dispatch) so we get the current workflow infrastructure.
+      # Always check out the default branch (main) so we use the *current*
+      # build infrastructure --- Doxyfile.in, .github/doxygen/ assets, layout
+      # tweaks added in later steps --- even when publishing docs for an
+      # older tag. The actual C/C++ sources are overlaid from BUILD_REF in a
+      # separate step below so doxygen documents the correct version.
+      #
+      # Without this, tag builds would inherit the Doxyfile.in shipped with
+      # the tag (e.g. one that still included README.md in INPUT and so
+      # rendered the README as the API site's landing page).
       - uses: actions/checkout@v5
         with:
+          ref: main
           fetch-depth: 0
-
-      # If the user dispatched with a specific ref, overlay only the doxygen
-      # input sources from that ref. This mirrors what docs.yml does for the
-      # zensical site and allows (re)building API docs for historical tags
-      # whose own copy of this workflow predates workflow_dispatch.
-      - name: Overlay doxygen sources from selected ref
-        if: ${{ inputs.ref != '' }}
-        env:
-          INPUT_REF: ${{ inputs.ref }}
-        run: |
-          git checkout "${INPUT_REF}" -- lib/ README.md Doxyfile.in
 
       # Decide which name this build is published as on gh-pages. Same rule
       # as docs.yml: dispatched input wins, otherwise the triggering ref.
@@ -68,6 +74,13 @@ jobs:
           fi
           echo "BUILD_REF=${BUILD_REF}" >> "$GITHUB_ENV"
           echo "Publishing API docs as version: ${BUILD_REF}"
+
+      # Overlay the C/C++ sources from BUILD_REF onto main's checkout so
+      # doxygen documents the right version. When BUILD_REF is itself "main"
+      # this is a no-op.
+      - name: Overlay lib/ from build ref
+        run: |
+          git checkout "${BUILD_REF}" -- lib/
 
       - name: Install Doxygen and Graphviz
         run: |
