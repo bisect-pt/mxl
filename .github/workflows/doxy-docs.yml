@@ -1,26 +1,73 @@
+# SPDX-FileCopyrightText: 2025 Contributors to the Media eXchange Layer project.
+# SPDX-License-Identifier: CC-BY-4.0
+
 name: Build Doxygen Documentation
 
 on:
-  # push:
-  #   branches:
-  #     - main
+  push:
+    branches:
+      - main
+      - docs-* # for testing
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Optional branch or tag to build docs from. Leave empty to build the
+          ref this workflow runs on. Use this to (re)build docs for historical
+          tags whose own copy of this workflow predates workflow_dispatch.
+        required: false
+        default: ""
+      alias_latest:
+        description: "Also publish this build under the 'latest' alias"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
-# Avoid racing with the mike-based Documentation workflow, which also pushes
-# to gh-pages.
+# Serialize with the zensical Documentation workflow, which also pushes to
+# gh-pages. Running them concurrently would race the worktree / push.
 concurrency:
   group: gh-pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      # Always check out the ref that triggered the run (or the default
+      # branch, for dispatch) so we get the current workflow infrastructure.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # If the user dispatched with a specific ref, overlay only the doxygen
+      # input sources from that ref. This mirrors what docs.yml does for the
+      # zensical site and allows (re)building API docs for historical tags
+      # whose own copy of this workflow predates workflow_dispatch.
+      - name: Overlay doxygen sources from selected ref
+        if: ${{ inputs.ref != '' }}
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          git checkout "${INPUT_REF}" -- lib/ README.md Doxyfile.in
+
+      # Decide which name this build is published as on gh-pages. Same rule
+      # as docs.yml: dispatched input wins, otherwise the triggering ref.
+      - name: Determine build ref
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          if [[ -n "${INPUT_REF}" ]]; then
+            BUILD_REF="${INPUT_REF}"
+          else
+            BUILD_REF="${GITHUB_REF_NAME}"
+          fi
+          echo "BUILD_REF=${BUILD_REF}" >> "$GITHUB_ENV"
+          echo "Publishing API docs as version: ${BUILD_REF}"
 
       - name: Install Doxygen and Graphviz
         run: |
@@ -44,20 +91,68 @@ jobs:
             -e "s|@AWESOME_CSS_DIR@|${GITHUB_WORKSPACE}/third_party/doxygen-awesome-css|g" \
             Doxyfile.in > Doxyfile
 
-      - name: Generate docs
+      - name: Build doxygen docs
         run: doxygen Doxyfile
 
-      # Publish into the gh-pages branch alongside the mike-managed site.
-      # keep_files: true preserves the versioned docs (latest/, vX.Y.Z/,
-      # versions.json, ...) maintained by .github/workflows/docs.yml.
-      - name: Deploy to gh-pages (api/ subdirectory)
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: docs/html
-          destination_dir: api
-          keep_files: true
-          commit_message: "doxygen: update api docs (${{ github.sha }})"
-          user_name: "github-actions[bot]"
-          user_email: "github-actions[bot]@users.noreply.github.com"
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # Publish under api/<version>/ on gh-pages, with an optional api/latest/
+      # alias. Versioning rules match the mike invocation in docs.yml:
+      #   - push to branch:    publish as <branch>, update 'latest'
+      #   - push to tag:       publish as <tag>, no alias change
+      #   - workflow_dispatch: publish as <BUILD_REF>; update 'latest' only
+      #                        when the alias_latest input is true
+      #
+      # We use a gh-pages worktree and a normal commit (rather than a force
+      # push) so the zensical site maintained by mike in the same branch is
+      # left untouched.
+      - name: Publish API docs to gh-pages
+        env:
+          ALIAS_LATEST: ${{ inputs.alias_latest }}
+        run: |
+          set -euo pipefail
+
+          UPDATE_LATEST=0
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            [[ "${ALIAS_LATEST}" == "true" ]] && UPDATE_LATEST=1
+          elif [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            UPDATE_LATEST=1
+          fi
+
+          SRC="${GITHUB_WORKSPACE}/docs/html"
+
+          # Make sure we have gh-pages locally. mike (in docs.yml) is normally
+          # the workflow that first creates it; if it doesn't exist yet, start
+          # an orphan branch so this workflow can run standalone too.
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            git fetch origin gh-pages:gh-pages || git fetch origin gh-pages
+            git worktree add gh-pages-wt gh-pages
+          else
+            git worktree add --detach gh-pages-wt
+            git -C gh-pages-wt checkout --orphan gh-pages
+            git -C gh-pages-wt rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          mkdir -p gh-pages-wt/api
+          rm -rf "gh-pages-wt/api/${BUILD_REF}"
+          cp -a "${SRC}/." "gh-pages-wt/api/${BUILD_REF}"
+
+          if [[ "${UPDATE_LATEST}" == "1" ]]; then
+            rm -rf "gh-pages-wt/api/latest"
+            cp -a "${SRC}/." "gh-pages-wt/api/latest"
+          fi
+
+          cd gh-pages-wt
+          git add api
+          if git diff --cached --quiet; then
+            echo "No changes to API docs; nothing to commit."
+            exit 0
+          fi
+
+          MSG="doxygen: publish API docs for ${BUILD_REF}"
+          [[ "${UPDATE_LATEST}" == "1" ]] && MSG="${MSG} (latest)"
+          git commit -m "${MSG}"
+          git push origin gh-pages

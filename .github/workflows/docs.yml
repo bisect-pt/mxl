@@ -30,6 +30,12 @@ permissions:
   pages: write
   id-token: write
 
+# Serialize with the Doxygen workflow, which also pushes to gh-pages.
+# Running them concurrently would race the worktree / push.
+concurrency:
+  group: gh-pages
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -79,10 +85,10 @@ jobs:
         run: ./.github/scripts/prepare-docs.sh
 
       - run: zensical build --clean
-      
+
       - name: Install lychee
         run: sudo snap install lychee
-          
+
       - name: Check for broken links with lychee
         run: lychee --root-dir ./site --verbose --no-progress --accept '100..=103,200..=299,403' --accept-timeouts './site/**/*.html'
 
