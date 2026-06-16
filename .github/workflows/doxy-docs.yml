@@ -91,6 +91,50 @@ jobs:
             -e "s|@AWESOME_CSS_DIR@|${GITHUB_WORKSPACE}/third_party/doxygen-awesome-css|g" \
             Doxyfile.in > Doxyfile
 
+      # Customise the doxygen output beyond what Doxyfile.in expresses:
+      #   1. LAYOUT_FILE: hide the "Main Page" tab (we don't ship a doxygen
+      #      landing page; the zensical site is the project landing page).
+      #   2. HTML_HEADER: inject a small <script> that loads the version
+      #      selector. We base it on doxygen's own default header so the
+      #      $relpath^ / $treeview / $search / $mathjax / $extrastylesheet
+      #      tokens stay intact and we don't have to track header changes
+      #      across doxygen versions.
+      #   3. HTML_EXTRA_FILES / HTML_EXTRA_STYLESHEET: ship the selector's
+      #      JS and CSS alongside the rest of the html output.
+      - name: Customise layout, header, and assets
+        run: |
+          set -euo pipefail
+          mkdir -p doxygen-gen
+
+          # 1. Default layout file, with the mainpage tab disabled.
+          doxygen -l doxygen-gen/DoxygenLayout.xml
+          sed -i \
+            's|<tab type="mainpage" visible="yes"|<tab type="mainpage" visible="no"|' \
+            doxygen-gen/DoxygenLayout.xml
+
+          # 2. Default html header/footer/stylesheet (the stylesheet output
+          #    is required by `doxygen -w html` but we don't use it).
+          doxygen -w html doxygen-gen/header.html doxygen-gen/footer.html \
+            doxygen-gen/_unused.css Doxyfile
+          # Inject the version selector script before </head>. Use a literal
+          # newline so the inserted line ends up on its own line.
+          sed -i '/<\/head>/i\
+          <script type="text/javascript" src="$relpath^version-selector.js" defer></script>' \
+            doxygen-gen/header.html
+
+          # 3. Append the customisation options to the Doxyfile. Using `+=`
+          #    for the list-valued options means we add to (rather than
+          #    replace) whatever Doxyfile.in already set.
+          cat >> Doxyfile <<EOF
+
+          # Appended by .github/workflows/doxy-docs.yml -----------------------------
+          LAYOUT_FILE             = ${GITHUB_WORKSPACE}/doxygen-gen/DoxygenLayout.xml
+          HTML_HEADER             = ${GITHUB_WORKSPACE}/doxygen-gen/header.html
+          HTML_FOOTER             = ${GITHUB_WORKSPACE}/doxygen-gen/footer.html
+          HTML_EXTRA_FILES       += ${GITHUB_WORKSPACE}/.github/doxygen/version-selector.js
+          HTML_EXTRA_STYLESHEET  += ${GITHUB_WORKSPACE}/.github/doxygen/version-selector.css
+          EOF
+
       - name: Build doxygen docs
         run: doxygen Doxyfile
 
@@ -143,7 +187,43 @@ jobs:
           if [[ "${UPDATE_LATEST}" == "1" ]]; then
             rm -rf "gh-pages-wt/api/latest"
             cp -a "${SRC}/." "gh-pages-wt/api/latest"
+            # Record which version 'latest' currently aliases, so the
+            # selector can label it "vX.Y.Z (latest)" in versions.json.
+            echo "${BUILD_REF}" > "gh-pages-wt/api/.latest_alias_of"
           fi
+
+          # Regenerate gh-pages/api/versions.json (mike-compatible format)
+          # so the in-page version selector can populate itself. Each entry
+          # has {version, title, aliases}; the one matching .latest_alias_of
+          # gets aliases: ["latest"].
+          LATEST_OF=""
+          [[ -f gh-pages-wt/api/.latest_alias_of ]] && \
+            LATEST_OF="$(cat gh-pages-wt/api/.latest_alias_of)"
+          (
+            cd gh-pages-wt/api
+            shopt -s nullglob
+            vdirs=()
+            for d in */; do
+              d="${d%/}"
+              [[ "${d}" == "latest" ]] && continue
+              vdirs+=("${d}")
+            done
+            if (( ${#vdirs[@]} > 0 )); then
+              printf '%s\n' "${vdirs[@]}" \
+                | sort -Vr \
+                | jq -Rs --arg latest "${LATEST_OF}" '
+                    split("\n")
+                    | map(select(length > 0))
+                    | map({
+                        version: .,
+                        title: .,
+                        aliases: (if . == $latest then ["latest"] else [] end)
+                      })
+                  ' > versions.json
+            else
+              echo '[]' > versions.json
+            fi
+          )
 
           # Regenerate gh-pages/api/index.html with a sorted list of all
           # published versions, so /mxl/api/ is browsable. 'latest' is pinned
