@@ -8,18 +8,16 @@ SPDX-License-Identifier: CC-BY-4.0
 The C/C++ API reference is generated separately with [Doxygen] and published
 alongside this site.
 
-- **[Latest API reference](https://peterbrightwell.github.io/mxl/api/latest/)** —
-  tracks the tip of the default branch.
-- **[Browse all published versions](https://peterbrightwell.github.io/mxl/api/)** —
-  one directory per released tag (e.g. `v1.1.0/`) plus branch builds.
+- **[API reference for this version (`__BUILD_REF__`)](__SITE_BASE__/api/__BUILD_REF__/)**
+  — matches the version of the docs you are currently reading.
+- **[Latest API reference](__SITE_BASE__/api/latest/)** — tracks the tip of the
+  default branch.
+- **[Browse all published versions](__SITE_BASE__/api/)** — index of every
+  published tag and branch build.
 
-To view the API docs for a specific release, navigate to
-`https://peterbrightwell.github.io/mxl/api/<version>/` (for example,
-[`api/v1.1.0/`](https://peterbrightwell.github.io/mxl/api/v1.1.0/)).
-
-The Doxygen build is driven by [`Doxyfile.in`](https://github.com/peterbrightwell/mxl/blob/main/Doxyfile.in)
+The Doxygen build is driven by [`Doxyfile.in`](https://github.com/__REPO_SLUG__/blob/main/Doxyfile.in)
 and published by the
-[`Build Doxygen Documentation`](https://github.com/peterbrightwell/mxl/blob/main/.github/workflows/doxy-docs.yml)
+[`Build Doxygen Documentation`](https://github.com/__REPO_SLUG__/blob/main/.github/workflows/doxy-docs.yml)
 workflow.
 
 [Doxygen]: https://www.doxygen.nl/

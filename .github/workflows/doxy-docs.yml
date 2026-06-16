@@ -145,6 +145,57 @@ jobs:
             cp -a "${SRC}/." "gh-pages-wt/api/latest"
           fi
 
+          # Regenerate gh-pages/api/index.html with a sorted list of all
+          # published versions, so /mxl/api/ is browsable. 'latest' is pinned
+          # to the top; everything else is version-sorted, descending.
+          INDEX="gh-pages-wt/api/index.html"
+          {
+            echo '<!DOCTYPE html>'
+            echo '<html lang="en">'
+            echo '<head>'
+            echo '  <meta charset="utf-8">'
+            echo '  <title>MXL API Reference — published versions</title>'
+            echo '  <meta name="viewport" content="width=device-width, initial-scale=1">'
+            echo '  <style>'
+            echo '    body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:40rem;margin:3rem auto;padding:0 1rem;line-height:1.5;color:#24292f}'
+            echo '    h1{margin-bottom:.25rem} p{color:#57606a}'
+            echo '    ul{padding-left:1.25rem} li{margin:.25rem 0}'
+            echo '    a{color:#0969da;text-decoration:none} a:hover{text-decoration:underline}'
+            echo '    code{background:#f6f8fa;padding:1px 4px;border-radius:4px}'
+            echo '  </style>'
+            echo '</head>'
+            echo '<body>'
+            echo '  <h1>MXL API Reference</h1>'
+            echo '  <p>Doxygen-generated C/C++ API reference. Pick a version:</p>'
+            echo '  <ul>'
+            (
+              cd gh-pages-wt/api
+              if [[ -d latest ]]; then
+                echo '    <li><a href="latest/"><strong>latest</strong></a> &mdash; alias for the default branch</li>'
+              fi
+              # All other version directories, version-sorted descending.
+              # Use globbing rather than `find -printf` so this works on any
+              # POSIX `find`. The shell expands */ to top-level dirs only.
+              shopt -s nullglob
+              dirs=()
+              for d in */; do
+                d="${d%/}"
+                [[ "${d}" == "latest" ]] && continue
+                dirs+=("${d}")
+              done
+              if (( ${#dirs[@]} > 0 )); then
+                printf '%s\n' "${dirs[@]}" \
+                  | sort -Vr \
+                  | while IFS= read -r d; do
+                      printf '    <li><a href="%s/"><code>%s</code></a></li>\n' "${d}" "${d}"
+                    done
+              fi
+            )
+            echo '  </ul>'
+            echo '</body>'
+            echo '</html>'
+          } > "${INDEX}"
+
           cd gh-pages-wt
           git add api
           if git diff --cached --quiet; then
