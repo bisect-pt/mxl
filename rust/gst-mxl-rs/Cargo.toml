@@ -18,6 +18,7 @@ ignored = ["regex"]
 
 [package.metadata.deb]
 name = "dmfmxl-gst"
+maintainer = "Bisect Lda. <info@bisect.pt>"
 depends = "$auto, dmfmxl-dev"
 assets = [
     ["target/release/libgstmxl.so", "/usr/lib/x86_64-linux-gnu/gstreamer-1.0/", "755"],

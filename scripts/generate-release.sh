@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 
 OUTPUT_DIR="${1:-debs}"
 PRESET="${2:-Linux-GCC-Release}"
+UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "unknown")
 
 VCPKG_TOOLCHAIN="${VCPKG_ROOT:+${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake}"
 if [ -z "${VCPKG_TOOLCHAIN}" ]; then
@@ -32,7 +33,9 @@ pushd build
 popd
 
 mkdir -p ${OUTPUT_DIR}
-cp "build/${PRESET}"/*.deb "${OUTPUT_DIR}/" 2>/dev/null
+for f in "build/${PRESET}"/*.deb; do
+    [ -f "$f" ] && cp "$f" "${OUTPUT_DIR}/$(basename "${f}" .deb)-ubuntu${UBUNTU_VERSION}.deb"
+done
 
 pushd rust
     if ! command -v cargo-deb &>/dev/null; then
@@ -41,27 +44,29 @@ pushd rust
     fi
     cargo deb -p gst-mxl-rs
 
-    cp target/debian/*.deb "../${OUTPUT_DIR}/" 2>/dev/null || true
+    for f in target/debian/*.deb; do
+        [ -f "$f" ] && cp "$f" "../${OUTPUT_DIR}/$(basename "${f}" .deb)-ubuntu${UBUNTU_VERSION}.deb"
+    done
 popd
 
-mkdir -p $OUTPUT_DIR/mxl-rs-bindings/DEBIAN
-mkdir -p $OUTPUT_DIR/mxl-rs-bindings/usr/include
-mkdir -p $OUTPUT_DIR/mxl-rs-bindings/opt/bisect/
+mkdir -p $OUTPUT_DIR/dmfmxl-rs-bindings/DEBIAN
+mkdir -p $OUTPUT_DIR/dmfmxl-rs-bindings/usr/include
+mkdir -p $OUTPUT_DIR/dmfmxl-rs-bindings/opt/bisect/
 
-cp -r rust/mxl-sys/ $OUTPUT_DIR/mxl-rs-bindings/opt/bisect/
-cp -r rust/mxl/ $OUTPUT_DIR/mxl-rs-bindings/opt/bisect/
+cp -r rust/mxl-sys/ $OUTPUT_DIR/dmfmxl-rs-bindings/opt/bisect/
+cp -r rust/mxl/ $OUTPUT_DIR/dmfmxl-rs-bindings/opt/bisect/
 
-CONTROL_FILE_CONTENT="Package: mxl-rs-bindings
+CONTROL_FILE_CONTENT="Package: dmfmxl-rs-bindings
 Version: 1.0
 Architecture: all
 Maintainer: Bisect Lda. <info@bisect.pt>
 Description: MXL rust bindings."
 
-touch $OUTPUT_DIR/mxl-rs-bindings/DEBIAN/control
-echo "$CONTROL_FILE_CONTENT" > $OUTPUT_DIR/mxl-rs-bindings/DEBIAN/control
+touch $OUTPUT_DIR/dmfmxl-rs-bindings/DEBIAN/control
+echo "$CONTROL_FILE_CONTENT" > $OUTPUT_DIR/dmfmxl-rs-bindings/DEBIAN/control
 
-dpkg-deb --build $OUTPUT_DIR/mxl-rs-bindings
+dpkg-deb --build "${OUTPUT_DIR}/dmfmxl-rs-bindings" "${OUTPUT_DIR}/dmfmxl-rs-bindings-ubuntu${UBUNTU_VERSION}.deb"
 
-rm -rf $OUTPUT_DIR/mxl-rs-bindings
+rm -rf $OUTPUT_DIR/dmfmxl-rs-bindings
 
 echo "Release package(s) copied to ${OUTPUT_DIR}/"
