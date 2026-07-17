@@ -34,10 +34,11 @@ on:
         type: boolean
         default: false
 
+# This workflow only produces content on the gh-pages branch; the actual
+# Pages deployment is handled by pages-deploy.yml, which runs on push to
+# that branch.
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 # Serialize with the Doxygen workflow, which also pushes to gh-pages.
 # Running them concurrently would race the worktree / push.

@@ -129,10 +129,14 @@ jobs:
           #    is required by `doxygen -w html` but we don't use it).
           doxygen -w html doxygen-gen/header.html doxygen-gen/footer.html \
             doxygen-gen/_unused.css Doxyfile
-          # Inject the version selector script before </head>. Use a literal
-          # newline so the inserted line ends up on its own line.
+          # Inject the version selector and main-docs back-link scripts
+          # before </head>. Use a literal newline so each inserted line
+          # ends up on its own line.
           sed -i '/<\/head>/i\
           <script type="text/javascript" src="$relpath^version-selector.js" defer></script>' \
+            doxygen-gen/header.html
+          sed -i '/<\/head>/i\
+          <script type="text/javascript" src="$relpath^main-docs-link.js" defer></script>' \
             doxygen-gen/header.html
 
           # 3. Append the customisation options to the Doxyfile. Using `+=`
@@ -145,7 +149,9 @@ jobs:
           HTML_HEADER             = ${GITHUB_WORKSPACE}/doxygen-gen/header.html
           HTML_FOOTER             = ${GITHUB_WORKSPACE}/doxygen-gen/footer.html
           HTML_EXTRA_FILES       += ${GITHUB_WORKSPACE}/.github/doxygen/version-selector.js
+          HTML_EXTRA_FILES       += ${GITHUB_WORKSPACE}/.github/doxygen/main-docs-link.js
           HTML_EXTRA_STYLESHEET  += ${GITHUB_WORKSPACE}/.github/doxygen/version-selector.css
+          HTML_EXTRA_STYLESHEET  += ${GITHUB_WORKSPACE}/.github/doxygen/main-docs-link.css
           EOF
 
       - name: Build doxygen docs
