@@ -11,19 +11,30 @@
 # modified from this repo.
 #
 # Switching Settings -> Pages -> Build and deployment -> Source to
-# "GitHub Actions" disables the built-in workflow. This file replaces it: it
-# runs on any push to gh-pages (from either producing workflow, or from a
-# manual commit) and serves the branch contents verbatim via the current
+# "GitHub Actions" disables the built-in workflow. This file replaces it,
+# serving the branch contents verbatim via the current
 # actions/upload-pages-artifact + actions/deploy-pages combo.
+#
+# Trigger notes:
+#   We use `workflow_run` rather than `push: branches: [gh-pages]` because
+#   push-triggered workflows must have their definition present on the ref
+#   that received the push --- and gh-pages only ever contains the built
+#   site (mike + doxygen output), never .github/workflows/. workflow_run
+#   instead reads this file from the default branch, so it fires correctly
+#   after either producer workflow completes on main / docs-* / a tag.
 
 name: Deploy gh-pages to GitHub Pages
 
 on:
-  push:
-    branches:
-      - gh-pages
+  workflow_run:
+    workflows:
+      - Documentation
+      - Build Doxygen Documentation
+    types:
+      - completed
   # Allow re-deploying the current gh-pages tip on demand (e.g. after
-  # rotating the Pages configuration in repo settings).
+  # rotating the Pages configuration in repo settings, or if a deploy was
+  # skipped because the producer run failed after already pushing).
   workflow_dispatch:
 
 permissions:
@@ -33,15 +44,20 @@ permissions:
 
 # Never cancel an in-progress deployment: leaving Pages in a half-updated
 # state is worse than deploying a slightly older revision. Concurrent
-# producer runs (docs.yml / doxy-docs.yml) are already serialized by their
-# own `gh-pages` concurrency group, so pushes --- and therefore runs of this
-# workflow --- arrive in order.
+# producer runs are already serialized by their own `gh-pages` concurrency
+# group, so runs of this workflow arrive in order.
 concurrency:
   group: pages-deploy
   cancel-in-progress: false
 
 jobs:
   deploy:
+    # Only deploy when the upstream producer succeeded. workflow_run fires
+    # on every completion regardless of conclusion, so filter here to avoid
+    # publishing a partially-built site. Manual dispatch is always allowed.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
