@@ -86,3 +86,14 @@ if [[ -f "${API_REF_PAGE}" ]]; then
     rm -f "${API_REF_PAGE}.bak"
     echo "Templated ${API_REF_PAGE} for ref=${REF}, site=${SITE_BASE}"
 fi
+
+# ---------------------------------------------------------------------------
+# 4. Template zensical.toml so the header repo link (repo_url / repo_name)
+#    points at the fork or upstream that produced this build. The same
+#    __REPO_SLUG__ placeholder is used elsewhere (see step 3).
+# ---------------------------------------------------------------------------
+if [[ -f zensical.toml ]]; then
+    sed -i.bak -e "s#__REPO_SLUG__#${REPO_SLUG}#g" zensical.toml
+    rm -f zensical.toml.bak
+    echo "Templated zensical.toml for repo=${REPO_SLUG}"
+fi

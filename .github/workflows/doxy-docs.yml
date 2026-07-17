@@ -129,15 +129,25 @@ jobs:
           #    is required by `doxygen -w html` but we don't use it).
           doxygen -w html doxygen-gen/header.html doxygen-gen/footer.html \
             doxygen-gen/_unused.css Doxyfile
-          # Inject the version selector and main-docs back-link scripts
-          # before </head>. Use a literal newline so each inserted line
-          # ends up on its own line.
+          # Inject the version selector, main-docs back-link, and GitHub
+          # repo-link scripts before </head>. Use a literal newline so each
+          # inserted line ends up on its own line.
           sed -i '/<\/head>/i\
           <script type="text/javascript" src="$relpath^version-selector.js" defer></script>' \
             doxygen-gen/header.html
           sed -i '/<\/head>/i\
           <script type="text/javascript" src="$relpath^main-docs-link.js" defer></script>' \
             doxygen-gen/header.html
+          sed -i '/<\/head>/i\
+          <script type="text/javascript" src="$relpath^github-repo-link.js" defer></script>' \
+            doxygen-gen/header.html
+
+          # 2a. Bake the current build's repo URL into a build-time copy of
+          #     github-repo-link.js. HTML_EXTRA_FILES copies files verbatim,
+          #     so we can't do the substitution in the source tree.
+          cp .github/doxygen/github-repo-link.js doxygen-gen/github-repo-link.js
+          sed -i "s|__REPO_URL__|${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}|g" \
+            doxygen-gen/github-repo-link.js
 
           # 3. Append the customisation options to the Doxyfile. Using `+=`
           #    for the list-valued options means we add to (rather than
@@ -150,8 +160,10 @@ jobs:
           HTML_FOOTER             = ${GITHUB_WORKSPACE}/doxygen-gen/footer.html
           HTML_EXTRA_FILES       += ${GITHUB_WORKSPACE}/.github/doxygen/version-selector.js
           HTML_EXTRA_FILES       += ${GITHUB_WORKSPACE}/.github/doxygen/main-docs-link.js
+          HTML_EXTRA_FILES       += ${GITHUB_WORKSPACE}/doxygen-gen/github-repo-link.js
           HTML_EXTRA_STYLESHEET  += ${GITHUB_WORKSPACE}/.github/doxygen/version-selector.css
           HTML_EXTRA_STYLESHEET  += ${GITHUB_WORKSPACE}/.github/doxygen/main-docs-link.css
+          HTML_EXTRA_STYLESHEET  += ${GITHUB_WORKSPACE}/.github/doxygen/github-repo-link.css
           EOF
 
       - name: Build doxygen docs
