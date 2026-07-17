@@ -67,14 +67,14 @@ jobs:
         with:
           ref: gh-pages
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
       # Upload the entire gh-pages tree as-is. mike (zensical site) and the
       # Doxygen workflow have already arranged the branch layout; we just
       # publish what's there.
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: .
 
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
