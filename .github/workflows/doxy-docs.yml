@@ -47,18 +47,19 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      # Always check out the default branch (main) so we use the *current*
-      # build infrastructure --- Doxyfile.in, .github/doxygen/ assets, layout
-      # tweaks added in later steps --- even when publishing docs for an
-      # older tag. The actual C/C++ sources are overlaid from BUILD_REF in a
-      # separate step below so doxygen documents the correct version.
+      # Check out the ref that triggered this run (the pushed branch/tag,
+      # or --- for workflow_dispatch --- the ref the workflow was dispatched
+      # from, which defaults to the default branch). This keeps the workflow
+      # file and every asset it references (Doxyfile.in, .github/doxygen/,
+      # scripts) coming from the *same* commit, so new files added in the
+      # same commit as new workflow steps are always visible.
       #
-      # Without this, tag builds would inherit the Doxyfile.in shipped with
-      # the tag (e.g. one that still included README.md in INPUT and so
-      # rendered the README as the API site's landing page).
+      # The C/C++ sources for BUILD_REF are overlaid from that ref in a
+      # separate step below, so doxygen documents the correct version even
+      # when we're re-running from a different ref (e.g. dispatched from
+      # main to rebuild docs for an older tag).
       - uses: actions/checkout@v5
         with:
-          ref: main
           fetch-depth: 0
 
       # Decide which name this build is published as on gh-pages. Same rule
