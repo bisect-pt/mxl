@@ -33,12 +33,18 @@ namespace mxl::lib::fabrics::ofi
         return _fiErrno;
     }
 
+    bool FabricException::isInterrupted() const noexcept
+    {
+        return _fiErrno == -FI_EINTR;
+    }
+
     mxlStatus mxlStatusFromFiErrno(int fiErrno)
     {
         switch (fiErrno)
         {
             case -FI_EINTR:  return MXL_ERR_INTERRUPTED;
             case -FI_EAGAIN: return MXL_ERR_NOT_READY;
+            case -FI_ENOSYS: return MXL_ERR_UNSUPPORTED_OPERATION;
             default:         return MXL_ERR_UNKNOWN;
         }
     }

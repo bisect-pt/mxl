@@ -15,9 +15,10 @@
 #include "Domain.hpp"
 #include "Exception.hpp"
 #include "FabricInfo.hpp"
-#include "GrainSlices.hpp"
+#include "FabricInfoHelpers.hpp"
 #include "Protocol.hpp"
 #include "Region.hpp"
+#include "SliceRange.hpp"
 #include "VariantUtils.hpp"
 
 namespace mxl::lib::fabrics::ofi
@@ -120,6 +121,8 @@ namespace mxl::lib::fabrics::ofi
                     state.ep.bind(cq, FI_TRANSMIT);
 
                     // Transition into the connecting state
+                    auto const faddr = _info.fabricAddress.decode();
+                    MXL_INFO("Connecting to {}", faddr.toString());
                     state.ep.connect(_info.fabricAddress);
                     return Connecting{.ep = std::move(state.ep)};
                 },
@@ -268,25 +271,9 @@ namespace mxl::lib::fabrics::ofi
         return Idle{.ep = Endpoint::create(old.domain(), old.id(), old.info()), .idleSince = std::chrono::steady_clock::now()};
     }
 
-    std::unique_ptr<RCInitiator> RCInitiator::setup(mxlFabricsInitiatorConfig const& config)
+    std::unique_ptr<RCInitiator> RCInitiator::setup(mxlFabricsInitiatorConfig const& config, FabricInfoView info)
     {
-        auto provider = providerFromAPI(config.interface.provider);
-        if (!provider)
-        {
-            throw Exception::make(MXL_ERR_NO_FABRIC, "No provider available");
-        }
-
-        uint64_t caps = FI_RMA | FI_WRITE | FI_REMOTE_WRITE;
-        // To enable device memory support:
-        // caps |=  FI_HMEM;
-        auto fabricInfoList = FabricInfoList::get(config.interface.address.node, config.interface.address.service, provider.value(), caps, FI_EP_MSG);
-
-        if (fabricInfoList.begin() == fabricInfoList.end())
-        {
-            throw Exception::make(MXL_ERR_NO_FABRIC, "No suitable fabric available");
-        }
-
-        auto info = *fabricInfoList.begin();
+        requireCapability(info, FI_WRITE, "Interface is missing required write capability");
         MXL_DEBUG("{}", fi_tostr(info.raw(), FI_TYPE_INFO));
 
         auto fabric = Fabric::open(info);
@@ -371,18 +358,18 @@ namespace mxl::lib::fabrics::ofi
         }
     }
 
-    bool RCInitiator::hasPendingWork() const noexcept
+    Initiator::MakeProgressResult RCInitiator::afterProgressResult() const noexcept
     {
         // Check if any of the targets have pending work.
         for (auto& [_, target] : _targets)
         {
             if (target.hasPendingWork())
             {
-                return true;
+                return Initiator::NotReady{};
             }
         }
 
-        return false;
+        return Initiator::Ready{};
     }
 
     bool RCInitiator::hasTarget() const noexcept
@@ -405,7 +392,7 @@ namespace mxl::lib::fabrics::ofi
         std::erase_if(_targets, [](auto const& item) { return item.second.canEvict(); });
     }
 
-    void RCInitiator::blockOnCQ(std::chrono::steady_clock::duration timeout)
+    Initiator::MakeProgressResult RCInitiator::blockOnCQ(std::chrono::steady_clock::duration timeout)
     {
         // A zero timeout would cause the queue to block indefinetly, which
         // is not our documented behaviour.
@@ -413,30 +400,45 @@ namespace mxl::lib::fabrics::ofi
         {
             // So just behave exactly like the non-blocking variant.
             makeProgress();
-            return;
+            return afterProgressResult();
         }
 
         for (;;)
         {
-            auto completion = _cq->readBlocking(timeout);
-            if (!completion)
+            try
             {
-                // No completion available, if we were flushing any endpoint, transition their state to done.
-                for (auto& [_, target] : _targets)
+                auto completion = _cq->readBlocking(timeout);
+                if (!completion)
                 {
-                    target.terminate();
+                    // No completion available, if we were flushing any endpoint, transition their state to done.
+                    for (auto& [_, target] : _targets)
+                    {
+                        target.terminate();
+                    }
+
+                    return afterProgressResult();
                 }
-                return;
-            }
 
-            // Find the endpoint that this completion was generated from
-            auto ep = _targets.find(Endpoint::idFromToken(completion->token()));
-            if (ep == _targets.end())
+                // Find the endpoint that this completion was generated from
+                auto ep = _targets.find(Endpoint::idFromToken(completion->token()));
+                if (ep == _targets.end())
+                {
+                    MXL_WARN("Received completion for an unknown endpoint");
+                }
+
+                ep->second.consume(*completion);
+
+                return afterProgressResult();
+            }
+            catch (FabricException const& ex)
             {
-                MXL_WARN("Received completion for an unknown endpoint");
-            }
+                if (ex.isInterrupted())
+                {
+                    return Initiator::Interrupted{};
+                }
 
-            return ep->second.consume(*completion);
+                throw;
+            }
         }
     }
 
@@ -491,7 +493,7 @@ namespace mxl::lib::fabrics::ofi
         }
     }
 
-    bool RCInitiator::makeProgress()
+    Initiator::MakeProgressResult RCInitiator::makeProgress()
     {
         if (!hasTarget())
         {
@@ -508,18 +510,17 @@ namespace mxl::lib::fabrics::ofi
         // Evict any peers that are dead and no longer will make progress.
         evictDeadEndpoints();
 
-        return hasPendingWork();
+        return afterProgressResult();
     }
 
-    bool RCInitiator::makeProgressBlocking(std::chrono::steady_clock::duration timeout)
+    Initiator::MakeProgressResult RCInitiator::makeProgressBlocking(std::chrono::steady_clock::duration timeout)
     {
         // If the timeout is less than our maintainance interval, just check all the queues once, execute all maintainance tasks once
         // and block on the completion queue for the rest of the time.
         if (timeout < EQPollInterval)
         {
             makeProgress();
-            blockOnCQ(timeout);
-            return hasPendingWork();
+            return blockOnCQ(timeout);
         }
 
         auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -527,9 +528,9 @@ namespace mxl::lib::fabrics::ofi
         for (;;)
         {
             // Poll all queues, execute all maintainance actions
-            if (!makeProgress())
+            if (std::holds_alternative<Initiator::Ready>(makeProgress()))
             {
-                return false;
+                return Initiator::Ready{};
             }
 
             // Calculate the remaining time until the user wants the blocking function to return. If there is no time left
@@ -537,14 +538,18 @@ namespace mxl::lib::fabrics::ofi
             auto timeUntilDeadline = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
             if (timeUntilDeadline <= decltype(timeUntilDeadline){0})
             {
-                return hasPendingWork();
+                return afterProgressResult();
             }
 
             // Block on the completion queue until a completion arrives, or the interval timeout occurs.
-            blockOnCQ(std::min(EQPollInterval, timeUntilDeadline));
-        }
+            auto const res = blockOnCQ(std::min(EQPollInterval, timeUntilDeadline));
+            if (std::holds_alternative<Initiator::NotReady>(res))
+            {
+                continue;
+            }
 
-        return hasPendingWork();
+            return res;
+        }
     }
 
     void RCInitiator::shutdown()

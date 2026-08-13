@@ -28,16 +28,53 @@ namespace mxl::lib::fabrics::ofi
     void RMAGrainEgressProtocol::transferGrain(Endpoint const& ep, std::uint64_t localIndex, std::uint64_t remoteIndex, std::uint32_t payloadOffset,
         SliceRange const& sliceRange, ::fi_addr_t destAddr)
     {
-        auto const localSize = sliceRange.transferSize(payloadOffset, _layout.sliceSizes[0]);
-        auto const localOffset = sliceRange.transferOffset(payloadOffset, _layout.sliceSizes[0]);
-        auto const remoteSize = sliceRange.transferSize(payloadOffset, _layout.sliceSizes[0]);
-        auto const remoteOffset = sliceRange.transferOffset(payloadOffset, _layout.sliceSizes[0]);
-
-        auto const localRegion = _localRegions[localIndex % _localRegions.size()].sub(localOffset, localSize);
-        auto const remoteRegion = _remoteInfo.remoteRegions[remoteIndex % _remoteInfo.remoteRegions.size()].sub(remoteOffset, remoteSize);
+        auto const localGrain = _localRegions[localIndex % _localRegions.size()];
+        auto const remoteGrain = _remoteInfo.remoteRegions[remoteIndex % _remoteInfo.remoteRegions.size()];
         auto const remoteSlot = remoteIndex % _remoteInfo.remoteRegions.size();
 
-        _pending += ep.write(_token, localRegion, remoteRegion, destAddr, ImmDataGrain{remoteSlot, sliceRange.end()}.data());
+        // Fast path: a full grain is transferred, can do one write no matter how many planes
+        if ((sliceRange.start() == 0) && (sliceRange.end() == _layout.totalSlices))
+        {
+            _pending += ep.write(_token, localGrain, remoteGrain, destAddr, std::make_optional(ImmDataGrain{remoteSlot, _layout.totalSlices}.data()));
+            return;
+        }
+
+        auto const planeCount = _layout.activePlaneCount();
+        for (std::size_t plane = 0; plane < planeCount; ++plane)
+        {
+            auto const sliceSize = _layout.sliceSizes[plane];
+            auto offset = std::uint32_t{0};
+            auto size = std::uint32_t{0};
+
+            if (plane == 0)
+            {
+                // need to include header with slice 0-x
+                if (sliceRange.start() == 0)
+                {
+                    offset = sliceRange.transferOffset(0, sliceSize);
+                    size = sliceRange.transferSize(sliceSize) + payloadOffset;
+                }
+                else
+                {
+                    offset = sliceRange.transferOffset(payloadOffset, sliceSize);
+                    size = sliceRange.transferSize(sliceSize);
+                }
+            }
+            else
+            {
+                auto const planeBase = _layout.planePayloadOffset(plane, payloadOffset);
+                offset = sliceRange.transferOffset(planeBase, sliceSize);
+                size = sliceRange.transferSize(sliceSize);
+            }
+
+            auto const localRegion = localGrain.sub(offset, size);
+            auto const remoteRegion = remoteGrain.sub(offset, size);
+
+            auto const isLastPlane = (plane == planeCount - 1);
+            auto const immData = isLastPlane ? std::make_optional(ImmDataGrain{remoteSlot, sliceRange.end()}.data()) : std::nullopt;
+
+            _pending += ep.write(_token, localRegion, remoteRegion, destAddr, immData);
+        }
     }
 
     void RMAGrainEgressProtocol::transferSamples(Endpoint const&, std::uint64_t, std::size_t, ::fi_addr_t)
@@ -204,12 +241,16 @@ namespace mxl::lib::fabrics::ofi
         // additional one per channel if 2 fragments are present (wrap-around). When a fragment is not present its size will be 0.
         auto sgList = std::vector<LocalRegion>{};
         sgList.reserve(sgListLen);
-        for (auto& fragment : slice.base.fragments)
+        // Write all fragments for one channel before moving to the next channel.
+        // Doing otherwise (fragment first) only works when source and target wrapped slices split at the same fragment sizes.
+        // If source and target have different ring positions, the target consumes the bytes with different fragment sizes and "stitches" the channel
+        // data back together incorrectly.
+        for (auto chan = std::size_t{0}; chan < slice.count; chan++)
         {
-            // check if the fragment present
-            if (fragment.size > 0)
+            for (auto const& fragment : slice.base.fragments)
             {
-                for (auto chan = std::size_t{0}; chan < slice.count; chan++)
+                // check if the fragment present
+                if (fragment.size > 0)
                 {
                     auto const srcAddr = reinterpret_cast<std::uintptr_t>(fragment.pointer) + (slice.stride * chan);
 

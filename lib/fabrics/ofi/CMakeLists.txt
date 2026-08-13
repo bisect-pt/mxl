@@ -36,9 +36,15 @@ target_sources(mxl-fabrics-objects
             src/internal/Exception.cpp
             src/internal/FILogging.cpp
             src/internal/Fabric.cpp
+            src/internal/FabricAddress.cpp
             src/internal/FabricInfo.cpp
+            src/internal/FabricInfoHelpers.cpp
             src/internal/FabricInstance.cpp
             src/internal/FabricVersion.cpp
+            src/internal/FabricInterfaceProbe.cpp
+            src/internal/FabricInterfaceList.cpp
+            src/internal/FabricInterfaceDescription.cpp
+            src/internal/Format.cpp
             src/internal/ImmData.cpp
             src/internal/Initiator.cpp
             src/internal/LocalRegion.cpp
@@ -48,6 +54,7 @@ target_sources(mxl-fabrics-objects
             src/internal/ProtocolEgressRMA.cpp
             src/internal/ProtocolIngressRMA.cpp
             src/internal/Provider.cpp
+            src/internal/ProviderConfig.cpp
             src/internal/RCInitiator.cpp
             src/internal/RCTarget.cpp
             src/internal/RDMInitiator.cpp
@@ -55,7 +62,7 @@ target_sources(mxl-fabrics-objects
             src/internal/Region.cpp
             src/internal/RegisteredRegion.cpp
             src/internal/RemoteRegion.cpp
-            src/internal/GrainSlices.cpp
+            src/internal/SliceRange.cpp
             src/internal/Target.cpp
             src/internal/TargetInfo.cpp
     )

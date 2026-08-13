@@ -13,6 +13,8 @@
 #include "mxl/fabrics.h"
 #include "DataLayout.hpp"
 #include "Domain.hpp"
+#include "FabricAddress.hpp"
+#include "ProviderConfig.hpp"
 #include "Region.hpp"
 
 namespace mxl::lib::fabrics::ofi
@@ -43,7 +45,10 @@ namespace mxl::lib::fabrics::ofi
 
     inline std::shared_ptr<Domain> getDomain(bool virtualAddress = false, bool rx_cq_data_mode = false)
     {
-        auto infoList = FabricInfoList::get("127.0.0.1", "9090", Provider::TCP, FI_RMA | FI_WRITE | FI_REMOTE_WRITE, FI_EP_MSG);
+        auto providerConfig = ProviderConfig::tcp(false, std::nullopt);
+        auto fabricAddress = FabricAddress::parse(Provider::TCP, "127.0.0.1", "1111");
+
+        auto infoList = FabricInfoList::getSourceInterfaces(providerConfig, fabricAddress);
         auto info = *infoList.begin();
 
         auto fabric = Fabric::open(info);
@@ -72,7 +77,7 @@ namespace mxl::lib::fabrics::ofi
 
     inline MxlRegions getEmptyVideoMxlRegions()
     {
-        return MxlRegions({}, DataLayout::fromDiscrete({8, 0, 0, 0}));
+        return MxlRegions({}, DataLayout::fromDiscrete({8, 0, 0, 0}, 1));
     }
 
     inline std::pair<MxlRegions, InnerRegions> getHostRegionGroups()
@@ -92,12 +97,12 @@ namespace mxl::lib::fabrics::ofi
             regions.emplace_back(*innerRegion.data(), innerRegion.size(), nullptr, nullptr);
         }
 
-        auto mxlRegions = MxlRegions(regions, DataLayout::fromDiscrete({8, 0, 0, 0}));
+        auto mxlRegions = MxlRegions(regions, DataLayout::fromDiscrete({8, 0, 0, 0}, 1));
         return {mxlRegions, innerRegions};
     }
 
     inline MxlRegions getMxlRegions(std::vector<std::vector<std::uint8_t>> const& innerRegions,
-        DataLayout dataLayout = DataLayout::fromDiscrete({8, 0, 0, 0}))
+        DataLayout dataLayout = DataLayout::fromDiscrete({8, 0, 0, 0}, 1))
     {
         auto regions = std::vector<Region>{};
         regions.reserve(innerRegions.size());

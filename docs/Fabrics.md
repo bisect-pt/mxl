@@ -27,7 +27,7 @@ From a user perspective, here’s the workflow to follow when using the Fabrics 
 
 The target has “media buffers” that it exposes to an initiator. That initiator also has “media buffers” that it will copy to the target. The user sets up the target, which will generate a `TargetInfo`. That `TargetInfo` is shared with the initiator through any out-of-band mechanism. The user sets up the initiator and adds the target using the `TargetInfo`. The initiator can start transferring grains or samples to the target. When transfers are completed, the target receives a notification with the required information to retrieve which part of the ring buffer was modified. It can use that information to commit to the media buffers.
 
-![alt](https://github.com/dmf-mxl/mxl/blob/main/docs/fabrics/img/mxl-fabrics-overview.png)
+![alt](./fabrics/img/mxl-fabrics-overview.png)
 
 ## 3. Transfers
 
@@ -249,11 +249,11 @@ For discrete flow transfers in the optimal case, Remote Write is used without a 
 
 #### 6.1.1 Moving a discrete flow with RMA
 Below is the workflow when Remote Write is used.
-![rma](https://github.com/dmf-mxl/mxl/blob/main/docs/fabrics/img/mxl-fabrics-rma.png)
+![rma](./fabrics/img/mxl-fabrics-rma.png)
 
 #### 6.1.2 Moving a discrete flow with Send/Receive
 Below is the workflow for send/recv.
-![sndrcv](https://github.com/dmf-mxl/mxl/blob/main/docs/fabrics/img/mxl-fabrics-bouncebuffer.png)
+![sndrcv](./fabrics/img/mxl-fabrics-bouncebuffer.png)
 
 #### 6.1.3 TX/RX Maximum Message Size 
 
@@ -261,16 +261,16 @@ Hardware may impose constraints on maximum message size, which can be smaller th
 
 #### 6.1.4 Optional Alpha plane 
 The alpha plane represents a special case requiring distinct handling. Within the grain data layout, the alpha plane follows the color plane.
-![alpha-grain-layout](https://github.com/dmf-mxl/mxl/blob/main/docs/fabrics/img/mxl-fabrics-grain-layout.png)
+![alpha-grain-layout](./fabrics/img/mxl-fabrics-grain-layout.png)
 
 When transferring a complete grain, a single Remote Write suffices. However, when transferring grain slices, two Remote Writes are required: the first for the color plane and the second for the alpha plane.
 
-![rma-with-alpha](https://github.com/dmf-mxl/mxl/blob/main/docs/fabrics/img/mxl-fabrics-rma-with-alpha.png)
+![rma-with-alpha](./fabrics/img/mxl-fabrics-rma-with-alpha.png)
 
 ## 7. Continuous Flow Support
 The MXL audio flow is called a “ContinuousFlow”. Information about the audio flow such as sample rate, channel count, the number of samples per channel can be found in the structure mxlContinuousFlowInfo. The underlying data structure is a single tmpfs file where each sample takes 32 bits. Samples follow a “planar” format, where the buffer is constructed as follow: all samples of channel 0 followed by all samples of channel 1 follow by all samples of channel 2, etc.
 
-![cont-flow](https://github.com/dmf-mxl/mxl/blob/main/docs/fabrics/img/mxl-fabrics-cont-flow-layout.png)
+![cont-flow](./fabrics/img/mxl-fabrics-cont-flow-layout.png)
 
 ### 7.1 Remote Write, Send/Recv with bouncing buffer vs Tag matching
 
@@ -312,7 +312,7 @@ Considering the trade-offs, Remote Write is chosen as the primary protocol, but 
 ### 7.3 - Bouncing Buffer Unpacking
 The transfer will now use the scatter-gather feature on the source buffer to target a ring bouncing buffer on the target side. Upon completion, the target side will copy the entry of the bouncing buffer back to the MXL Audio Flow.
 
-![cont-flow-rma](https://github.com/dmf-mxl/mxl/blob/main/docs/fabrics/img/mxl-fabrics-cont-flow-rma.png)
+![cont-flow-rma](./fabrics/img/mxl-fabrics-cont-flow-rma.png)
 
 To be able to unpack the bouncing buffer entry back to the mxl audio flow, we require some static information found in the ContinuousFlowData type.
 - Channel count
@@ -345,3 +345,100 @@ The currently implemented feature set covers the optimal paths for both discrete
 - **Continuous flow (samples):** Transferred using Remote Write (RMA) with scatter-gather on the source side, landing data into a bouncing buffer on the target. Upon completion, the target unpacks the bouncing buffer back into the non-contiguous per-channel buffers of the MXL audio flow.
 
 Send/Recv and tag-matching fallback paths are not yet implemented. Send/Recv without tag matching requires a bouncing buffer and an extra copy, while tag matching requires explicit synchronization between initiator and target and may not benefit from hardware acceleration depending on the NIC. Given these trade-offs and that Remote Write covers the primary use cases, the fallback paths have been deferred.
+
+## 11. Receiving grains: draining the completion queue
+
+A target receives grains by repeatedly calling `mxlFabricsTargetReadGrainNonBlocking()`
+(or its blocking variant). Each call reads **one** completion from the target's
+completion queue (CQ), performs the small amount of bookkeeping needed to make
+the grain visible to local `FlowReader`s, and returns the grain index.
+
+### 11.1 The problem: the CQ can overflow
+
+The CQ has a bounded depth. Every grain written by an initiator produces one
+completion, which stays in the CQ until the application consumes it with a
+`Read…` call. If completions are produced faster than the application consumes
+them, the CQ fills up.
+
+This is easy to hit on a high-frame-rate or many-stream receiver where the
+per-grain application work (decoding, writing to disk, updating statistics) takes
+longer than the grain inter-arrival time. A naive loop that does the expensive
+work inline, one grain per iteration, lets completions accumulate:
+
+```c
+// Anti-pattern: heavy work inline, one completion per iteration.
+while (running) {
+    uint64_t index;
+    mxlStatus s = mxlFabricsTargetReadGrain(target, 200 /*ms*/, &index);
+    if (s == MXL_ERR_NOT_READY || s == MXL_ERR_TIMEOUT) continue;
+    if (s != MXL_STATUS_OK) break;
+
+    process_grain(index); // decode + disk + stats: slower than 1/fps
+}
+```
+
+When the CQ overflows, the underlying provider reports an error completion. On
+connection-oriented providers (e.g. `verbs`) this surfaces as a fatal error on
+the queue pair, which tears the connection down — the transfer stops and the
+target must be re-established. On other providers the exact symptom differs, but
+in all cases completions are lost.
+
+### 11.2 The pattern: two-phase drain
+
+Decouple **draining** the CQ from **processing** the grains. Each loop iteration
+first drains every currently-available completion (cheap, bounded by the burst
+size), enqueuing just the grain indices, and then performs at most a bounded
+amount of the expensive per-grain work.
+
+`mxlFabricsTargetReadGrainNonBlocking()` reads a single completion and returns
+`MXL_ERR_NOT_READY` once the CQ is empty, so a tight inner loop over it drains
+every currently-available grain without ever blocking on the heavy work:
+
+```c
+// Phase 1 (hot): drain ALL currently-available completions, enqueuing indices.
+for (;;) {
+    uint64_t index;
+    mxlStatus s = mxlFabricsTargetReadGrainNonBlocking(target, &index);
+    if (s == MXL_ERR_NOT_READY) break;     // CQ drained for now
+    if (s != MXL_STATUS_OK) { handle_error(s); break; }
+    queue_push(&work, index);              // enqueue, do not process here
+}
+
+// Phase 2 (warm): process a bounded number of queued grains.
+for (int n = 0; n < MAX_PER_ITER && queue_pop(&work, &index); ++n) {
+    process_grain(index);                  // decode + disk + stats
+}
+```
+
+Because Phase 1 never blocks on the heavy work, the CQ is emptied promptly even
+when processing temporarily falls behind; the backlog lives in the application's
+own queue, which is not size-constrained by the NIC. The same structure works for
+samples with `mxlFabricsTargetReadSamplesNonBlocking()`.
+
+### 11.3 Sizing the completion queue
+
+The two-phase loop tolerates bursts, but the CQ must still be deep enough to hold
+the completions that can arrive between two Phase-1 drains. As a rule of thumb:
+
+```
+cqDepth  >=  peak completions per drain interval
+         ~=  streams_on_this_target  x  ceil(drain_interval / grain_interval)
+```
+
+where `grain_interval = 1 / fps`. Add headroom for jitter. For example, a single
+1080p60 stream drained every few milliseconds needs only a small depth, while a
+target aggregating many streams, or one whose loop occasionally stalls for tens
+of milliseconds, needs a correspondingly deeper queue.
+
+The depth is configured per target through the `options` argument of
+`mxlFabricsTargetSetup()`:
+
+```c
+// Size the target completion queue explicitly.
+mxlFabricsTargetSetup(target, &config, "{\"cqDepth\": 256}", &targetInfo);
+```
+
+When the option is omitted, a small implementation default is used, which is
+adequate for low-rate, promptly-drained receivers but should be raised for the
+high-rate / many-stream / slow-processing cases described above. `cqDepth`
+applies to target endpoints; it is ignored for initiators.

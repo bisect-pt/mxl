@@ -10,6 +10,7 @@
 #include <rdma/fi_errno.h>
 #include "mxl/fabrics.h"
 #include "Exception.hpp"
+#include "FabricInterfaceProbe.hpp"
 #include "LocalRegion.hpp"
 #include "RCTarget.hpp"
 #include "RDMTarget.hpp"
@@ -35,73 +36,47 @@ namespace mxl::lib::fabrics::ofi
         return reinterpret_cast<mxlFabricsTarget>(this);
     }
 
-    std::optional<Target::GrainReadResult> TargetWrapper::readGrain()
+    std::optional<Target::ReadResult> TargetWrapper::read()
     {
         if (!_inner)
         {
             throw Exception::invalidState("Target is not set up.");
         }
 
-        return _inner->readGrain();
+        return _inner->read();
     }
 
-    std::optional<Target::GrainReadResult> TargetWrapper::readGrainBlocking(std::chrono::steady_clock::duration timeout)
+    std::optional<Target::ReadResult> TargetWrapper::readBlocking(std::chrono::steady_clock::duration timeout)
     {
         if (!_inner)
         {
             throw Exception::invalidState("Target is not set up.");
         }
 
-        return _inner->readGrainBlocking(timeout);
+        return _inner->readBlocking(timeout);
     }
 
-    std::optional<Target::SampleReadResult> TargetWrapper::readSamples()
+    template<typename TargetT>
+    std::unique_ptr<TargetInfo> TargetWrapper::setup(mxlFabricsTargetConfig const& config, FabricInfoView info, TargetSetupOptions const& options)
     {
-        if (!_inner)
-        {
-            throw Exception::invalidState("Target is not set up.");
-        }
-
-        return _inner->readSamples();
+        auto [inner, targetInfo] = TargetT::setup(config, info, options);
+        _inner = std::move(inner);
+        return std::move(targetInfo);
     }
 
-    std::optional<Target::SampleReadResult> TargetWrapper::readSamplesBlocking(std::chrono::steady_clock::duration timeout)
-    {
-        if (!_inner)
-        {
-            throw Exception::invalidState("Target is not set up.");
-        }
-
-        return _inner->readSamplesBlocking(timeout);
-    }
-
-    std::unique_ptr<TargetInfo> TargetWrapper::setup(mxlFabricsTargetConfig const& config)
+    std::unique_ptr<TargetInfo> TargetWrapper::setup(mxlFabricsTargetConfig const& config, TargetSetupOptions const& options)
     {
         if (_inner)
         {
             _inner.reset();
         }
 
-        switch (config.interface.provider)
+        auto [info, providerConfig] = selectSourceInterface(config.interface, /* target */ true);
+        switch (info->ep_attr->type)
         {
-            case MXL_FABRICS_PROVIDER_ANY: [[fallthrough]];
-            case MXL_FABRICS_PROVIDER_TCP: [[fallthrough]];
-            case MXL_FABRICS_PROVIDER_VERBS:
-            {
-                auto [target, info] = RCTarget::setup(config);
-                _inner = std::move(target);
-                return std::move(info);
-            }
-
-            case MXL_FABRICS_PROVIDER_SHM: [[fallthrough]];
-            case MXL_FABRICS_PROVIDER_EFA:
-            {
-                auto [target, info] = RDMTarget::setup(config);
-                _inner = std::move(target);
-                return std::move(info);
-            }
+            case FI_EP_MSG: return setup<RCTarget>(config, info.view(), options);
+            case FI_EP_RDM: return setup<RDMTarget>(config, info.view(), options);
+            default:        throw Exception::invalidState("unsupported endpoint type");
         }
-
-        throw Exception::invalidArgument("Invalid provider value");
     }
 }

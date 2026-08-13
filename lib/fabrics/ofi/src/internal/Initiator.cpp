@@ -5,6 +5,7 @@
 #include "Initiator.hpp"
 #include "mxl/fabrics.h"
 #include "Exception.hpp"
+#include "FabricInterfaceProbe.hpp"
 #include "RCInitiator.hpp"
 #include "RDMInitiator.hpp"
 
@@ -28,25 +29,13 @@ namespace mxl::lib::fabrics::ofi
             _inner.reset();
         }
 
-        switch (config.interface.provider)
+        auto const [info, provierConfig] = selectSourceInterface(config.interface, /* target */ false);
+        switch (info.view().endpointType())
         {
-            case MXL_FABRICS_PROVIDER_ANY:
-            case MXL_FABRICS_PROVIDER_TCP:
-            case MXL_FABRICS_PROVIDER_VERBS:
-            {
-                _inner = RCInitiator::setup(config);
-                return;
-            }
-
-            case MXL_FABRICS_PROVIDER_SHM:
-            case MXL_FABRICS_PROVIDER_EFA:
-            {
-                _inner = RDMInitiator::setup(config);
-                return;
-            }
+            case FI_EP_MSG: _inner = RCInitiator::setup(config, info.view()); break;
+            case FI_EP_RDM: _inner = RDMInitiator::setup(config, info.view()); break;
+            default:        throw Exception::invalidState("unsupported endpoint type");
         }
-
-        throw Exception::invalidArgument("Invalid provider value");
     }
 
     void InitiatorWrapper::addTarget(TargetInfo const& targetInfo)
@@ -100,7 +89,7 @@ namespace mxl::lib::fabrics::ofi
         _inner->transferSamples(headIndex, count);
     }
 
-    bool InitiatorWrapper::makeProgress()
+    Initiator::MakeProgressResult InitiatorWrapper::makeProgress()
     {
         if (!_inner)
         {
@@ -110,7 +99,7 @@ namespace mxl::lib::fabrics::ofi
         return _inner->makeProgress();
     }
 
-    bool InitiatorWrapper::makeProgressBlocking(std::chrono::steady_clock::duration timeout)
+    Initiator::MakeProgressResult InitiatorWrapper::makeProgressBlocking(std::chrono::steady_clock::duration timeout)
     {
         if (!_inner)
         {

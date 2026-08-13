@@ -137,7 +137,8 @@ namespace mxl::lib
 
     bool PosixContinuousFlowWriter::signalCompletedBatch() noexcept
     {
-        auto const currentSyncSampleBatch = _currentIndex / _syncBatchSize;
+        auto const flow = _flowData->flow();
+        auto const currentSyncSampleBatch = flow->info.runtime.headIndex / _syncBatchSize;
         if (currentSyncSampleBatch < _lastSyncSampleBatch)
         {
             return false;
@@ -145,7 +146,7 @@ namespace mxl::lib
         if (currentSyncSampleBatch == _lastSyncSampleBatch)
         {
             // Signal now before overshooting the maximum the next time around
-            if ((_currentIndex % _syncBatchSize) > _earlySyncThreshold)
+            if ((flow->info.runtime.headIndex % _syncBatchSize) > _earlySyncThreshold)
             {
                 _lastSyncSampleBatch = currentSyncSampleBatch + 1U;
             }

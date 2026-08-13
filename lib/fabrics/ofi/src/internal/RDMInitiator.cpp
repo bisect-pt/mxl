@@ -20,7 +20,7 @@
 #include "Endpoint.hpp"
 #include "Exception.hpp"
 #include "Fabric.hpp"
-#include "Provider.hpp"
+#include "FabricInfoHelpers.hpp"
 #include "Region.hpp"
 #include "TargetInfo.hpp"
 #include "VariantUtils.hpp"
@@ -117,40 +117,27 @@ namespace mxl::lib::fabrics::ofi
             _state);
     }
 
-    std::unique_ptr<RDMInitiator> RDMInitiator::setup(mxlFabricsInitiatorConfig const& config)
+    std::unique_ptr<RDMInitiator> RDMInitiator::setup(mxlFabricsInitiatorConfig const& config, FabricInfoView info)
     {
-        auto provider = providerFromAPI(config.interface.provider);
-        if (!provider)
-        {
-            throw Exception::make(MXL_ERR_NO_FABRIC, "No provider available.");
-        }
-
-        auto caps = FI_RMA | FI_WRITE;
-        // To enable device memory support:
-        // caps |=  FI_HMEM;
-        auto fabricInfoList = FabricInfoList::get(config.interface.address.node, config.interface.address.service, provider.value(), caps, FI_EP_RDM);
-        if (fabricInfoList.begin() == fabricInfoList.end())
-        {
-            throw Exception::make(MXL_ERR_NO_FABRIC, "No suitable fabric available");
-        }
-
-        auto info = *fabricInfoList.begin();
-        MXL_DEBUG("{}", fi_tostr(info.raw(), FI_TYPE_INFO));
-
-        auto fabric = Fabric::open(info);
-        auto domain = Domain::open(fabric);
-
-        auto endpoint = Endpoint::create(domain);
+        requireCapability(info, FI_WRITE, "Interface is missing required remote write capability");
 
         auto cqAttr = CompletionQueue::Attributes::defaults();
-        if (provider == Provider::EFA)
+        if (config.interface.provider == MXL_FABRICS_PROVIDER_EFA)
         {
             if (!CompletionQueue::isWaitObjectSupportedForEFA())
             {
-                MXL_WARN("Wait objects not supported in EFA provider for this libfabric version. Only non-blocking API available.");
+                if ((config.interface.caps.flags & MXL_FABRICS_IFACE_CAP_BLOCKING_OPERATIONS) != 0)
+                {
+                    throw Exception::make(MXL_ERR_NO_FABRIC, "Blocking API support requested, but not available for this fabric/version");
+                }
+
                 cqAttr.waitObject = FI_WAIT_NONE;
             }
         }
+
+        auto fabric = Fabric::open(info);
+        auto domain = Domain::open(fabric);
+        auto endpoint = Endpoint::create(domain);
         auto cq = CompletionQueue::open(endpoint.domain(), cqAttr);
         endpoint.bind(cq, FI_TRANSMIT | FI_RECV);
 
@@ -231,15 +218,15 @@ namespace mxl::lib::fabrics::ofi
     }
 
     // makeProgress
-    bool RDMInitiator::makeProgress()
+    Initiator::MakeProgressResult RDMInitiator::makeProgress()
     {
         activateIdleEndpoints();
         pollCQ();
-        return hasPendingWork();
+        return afterProgressResult();
     }
 
     // makeProgressBlocking
-    bool RDMInitiator::makeProgressBlocking(std::chrono::steady_clock::duration timeout)
+    Initiator::MakeProgressResult RDMInitiator::makeProgressBlocking(std::chrono::steady_clock::duration timeout)
     {
         auto now = std::chrono::steady_clock::now();
         activateIdleEndpoints();
@@ -248,14 +235,25 @@ namespace mxl::lib::fabrics::ofi
         auto remaining = timeout - elapsed;
         if (remaining.count() >= 0)
         {
-            blockOnCQ(remaining);
+            try
+            {
+                blockOnCQ(remaining);
+            }
+            catch (FabricException const& ex)
+            {
+                if (ex.isInterrupted())
+                {
+                    return Initiator::Interrupted{};
+                }
+                throw;
+            }
         }
         else
         {
             pollCQ();
         }
 
-        return hasPendingWork();
+        return afterProgressResult();
     }
 
     RDMInitiatorTarget& RDMInitiator::findRemoteByEndpoint(Endpoint::Id id)
@@ -280,17 +278,17 @@ namespace mxl::lib::fabrics::ofi
         return it->second;
     }
 
-    bool RDMInitiator::hasPendingWork() const noexcept
+    Initiator::MakeProgressResult RDMInitiator::afterProgressResult() const noexcept
     {
         for (auto const& [_, remote] : _targets)
         {
             if (remote.hasPendingWork())
             {
-                return true;
+                return Initiator::NotReady{};
             }
         }
 
-        return false;
+        return Initiator::Ready{};
     }
 
     void RDMInitiator::blockOnCQ(std::chrono::steady_clock::duration timeout)

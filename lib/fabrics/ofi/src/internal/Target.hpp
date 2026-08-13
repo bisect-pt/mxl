@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -12,6 +13,21 @@
 
 namespace mxl::lib::fabrics::ofi
 {
+
+    /** \brief Provider-independent tuning options for target setup.
+     *
+     * Groups the optional knobs that influence how a target is created so that
+     * new tunables can be added without changing the setup() signatures.
+     */
+    struct TargetSetupOptions
+    {
+        /** \brief Desired completion-queue depth.
+         *
+         * When left empty the implementation default
+         * (CompletionQueue::Attributes::DEFAULT_SIZE) is used.
+         */
+        std::optional<std::size_t> cqDepth;
+    };
 
     /** \brief Abstract base class for Target implementations.
      */
@@ -31,7 +47,10 @@ namespace mxl::lib::fabrics::ofi
             std::size_t count;
         };
 
-        using ReadResult = std::variant<GrainReadResult, SampleReadResult>;
+        struct Interrupted
+        {};
+
+        using ReadResult = std::variant<GrainReadResult, SampleReadResult, Interrupted>;
 
     public:
         virtual ~Target() = default;
@@ -41,26 +60,13 @@ namespace mxl::lib::fabrics::ofi
          * A non-blocking operation that also drives the connection forward. Continuous invocation of this function is necessary for connection
          * establishment and ongoing progress.
          */
-        virtual std::optional<GrainReadResult> readGrain() = 0;
+        virtual std::optional<ReadResult> read() = 0;
 
         /** \brief Determine if new data can be consumed.
          *
          * A blocking version of readGrain. see readGrain().
          */
-        virtual std::optional<GrainReadResult> readGrainBlocking(std::chrono::steady_clock::duration timeout) = 0;
-
-        /** \brief Determine if new data can be consumed.
-         *
-         * A non-blocking operation that also drives the connection forward. Continuous invocation of this function is necessary for connection
-         * establishment and ongoing progress.
-         */
-        virtual std::optional<SampleReadResult> readSamples() = 0;
-
-        /** \brief Determine if new data can be consumed.
-         *
-         * A blocking version of readSamples. see readSamples().
-         */
-        virtual std::optional<SampleReadResult> readSamplesBlocking(std::chrono::steady_clock::duration timeout) = 0;
+        virtual std::optional<ReadResult> readBlocking(std::chrono::steady_clock::duration timeout) = 0;
 
         /** \brief Shut down the target gracefully.
          * Initiates a graceful shutdown of the target and blocks until the shutdown is complete.
@@ -109,19 +115,11 @@ namespace mxl::lib::fabrics::ofi
 
         /** \copydoc Target::readGrain()
          */
-        std::optional<Target::GrainReadResult> readGrain();
+        std::optional<Target::ReadResult> read();
 
         /** \copydoc Target::readGrainBlocking(std::chrono::steady_clock::duration)
          */
-        std::optional<Target::GrainReadResult> readGrainBlocking(std::chrono::steady_clock::duration timeout);
-
-        /** \copydoc Target::readSamples()
-         */
-        std::optional<Target::SampleReadResult> readSamples();
-
-        /** \copydoc Target::readSamplesBlocking(std::chrono::steady_clock::duration)
-         */
-        std::optional<Target::SampleReadResult> readSamplesBlocking(std::chrono::steady_clock::duration timeout);
+        std::optional<Target::ReadResult> readBlocking(std::chrono::steady_clock::duration timeout);
 
         /** \brief Set up the target with the specified configuration.
          *
@@ -129,10 +127,20 @@ namespace mxl::lib::fabrics::ofi
          * based on the provided configuration.
          *
          * \param config The configuration to use for setting up the target.
+         * \param options Optional tuning parameters (e.g. completion queue depth).
          */
-        std::unique_ptr<TargetInfo> setup(mxlFabricsTargetConfig const& config);
+        [[nodiscard]]
+        std::unique_ptr<TargetInfo> setup(mxlFabricsTargetConfig const& config, TargetSetupOptions const& options = {});
 
     private:
+        /** \brief Set up the correct concrete target type internally and returns the target info
+         * \param config Target configuration passed by the user.
+         * \param info Fabric info already resolved from the interface config.
+         */
+        template<typename TargetT>
+        [[nodiscard]]
+        std::unique_ptr<TargetInfo> setup(mxlFabricsTargetConfig const& config, FabricInfoView info, TargetSetupOptions const& options = {});
+
         std::unique_ptr<Target> _inner; /**< The underlying target implementation. */
     };
 }
