@@ -52,7 +52,6 @@ popd
 mkdir -p $OUTPUT_DIR/dmfmxl-rs-bindings/DEBIAN
 mkdir -p $OUTPUT_DIR/dmfmxl-rs-bindings/opt/bisect/
 
-cp rust/Cargo.toml rust/Cargo.lock $OUTPUT_DIR/dmfmxl-rs-bindings/opt/bisect/
 cp -r rust/mxl rust/mxl-sys $OUTPUT_DIR/dmfmxl-rs-bindings/opt/bisect/
 
 CONTROL_FILE_CONTENT="Package: dmfmxl-rs-bindings

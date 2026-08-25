@@ -3,16 +3,16 @@
 
 [package]
 name = "mxl-sys"
-edition.workspace = true
-publish.workspace = true
-version.workspace = true
-license.workspace = true
+edition = "2024"
+publish = false
+version = "0.1.0"
+license = "Apache-2.0"
 
 [dependencies]
-libloading.workspace = true
+libloading = { version = "0.8.9" }
 
 [build-dependencies]
-bindgen.workspace = true
+bindgen = { version = "0.72", features = ["experimental"] }
 cmake = "0.1.54"
 
 [features]

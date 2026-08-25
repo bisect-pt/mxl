@@ -4,11 +4,11 @@
 [package]
 name = "gst-mxl-rs"
 description = "MXL plugin"
-repository.workspace = true
-edition.workspace = true
-publish.workspace = true
-version.workspace = true
-license.workspace = true
+repository = "https://github.com/dmf-mxl/mxl"
+edition = "2024"
+publish = false
+version = "0.1.0"
+license = "Apache-2.0"
 
 [package.metadata]
 install-subcommands = "cargo install cargo-deb"
@@ -32,11 +32,11 @@ gstreamer = "0.24.4"
 gstreamer-audio = "0.24.4"
 gstreamer-base = "0.24.4"
 mxl = { path = "../mxl" }
-serde_json.workspace = true
-thiserror.workspace = true
-uuid.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
+serde_json = "1.0"
+thiserror = "2.0.12"
+uuid = { version = "1.17", features = ["v4", "serde"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "std"] }
 tracing-test = "0.2.5"
 
 # If this is not included, tracing won't work while debugging
