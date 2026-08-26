@@ -3,24 +3,24 @@
 
 [package]
 name = "mxl"
-edition.workspace = true
-publish.workspace = true
-version.workspace = true
-license.workspace = true
+edition = "2024"
+publish = false
+version = "0.1.0"
+license = "Apache-2.0"
 
 [dependencies]
 mxl-sys = { path = "../mxl-sys" }
 
-libloading.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-uuid.workspace = true
-serde.workspace = true
+libloading = { version = "0.8.9" }
+thiserror = "2.0.12"
+tracing = { version = "0.1", features = ["log"] }
+uuid = { version = "1.17", features = ["v4", "serde"] }
+serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
-clap.workspace = true
-serde_json.workspace = true
-tracing-subscriber.workspace = true
+clap = { version = "4.1.4", default-features = false, features = ["std", "derive", "cargo", "env", "help", "usage", "error-context"] }
+serde_json = "1.0"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "std"] }
 
 [features]
 mxl-not-built = ["mxl-sys/mxl-not-built"]
