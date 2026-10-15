@@ -26,7 +26,7 @@ pub use samples::{
 };
 pub use storage::{
     GRAIN_VALID_SLICES_ALL, GrainPlaneLayout, GrainSlot, GrainStorage, GrainStorageLayout,
-    MappedSlots, PAYLOAD_STORAGE_HOST_POINTER,
+    MappedSlots, PAYLOAD_STORAGE_CUDA_DEVICE_POINTER, PAYLOAD_STORAGE_HOST_POINTER,
 };
 
 #[cfg(feature = "mxl-fabrics-ofi")]

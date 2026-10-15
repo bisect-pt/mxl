@@ -15,6 +15,10 @@ use crate::{reader::FlowReaderResource, writer::FlowWriterResource};
 /// The payload is in host memory, and each slot is described by a host pointer.
 pub const PAYLOAD_STORAGE_HOST_POINTER: u32 = mxl_sys::MXL_PAYLOAD_STORAGE_HOST_POINTER;
 
+/// The payload is in CUDA device memory, and each slot is described by a device pointer.
+pub const PAYLOAD_STORAGE_CUDA_DEVICE_POINTER: u32 =
+    mxl_sys::MXL_PAYLOAD_STORAGE_CUDA_DEVICE_POINTER;
+
 /// The number of valid slices to wait for to get a complete grain.
 pub const GRAIN_VALID_SLICES_ALL: u16 = u16::MAX;
 
@@ -161,6 +165,16 @@ impl GrainStorage {
             .then(|| unsafe { self.value.__bindgen_anon_1.host.pointer.cast::<u8>() })
     }
 
+    /// The CUDA device address of the first byte of the slot, valid in this process on the device
+    /// of the layout, if the payload is in CUDA device memory. The planes are at the offsets of the
+    /// layout. Device work that writes a grain must be complete before the grain is committed.
+    pub fn cuda_device_pointer(&self) -> Option<*mut std::ffi::c_void> {
+        // SAFETY: every bit pattern of the union is a valid pointer, and it is only returned for
+        // CUDA device storage, for which the cuda member is the valid one.
+        let pointer = unsafe { self.value.__bindgen_anon_1.cuda.pointer };
+        (self.value.storageType == PAYLOAD_STORAGE_CUDA_DEVICE_POINTER).then_some(pointer)
+    }
+
     /// The bytes that describe the slot for a storage type other than host memory.
     pub fn reserved(&self) -> &[u8] {
         // SAFETY: every bit pattern of the union is a valid byte array.
@@ -264,5 +278,27 @@ impl GrainSlot {
             total_slices: info.totalSlices,
             valid_slices: info.validSlices,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slot_pointers_follow_the_storage_type() {
+        let mut layout = GrainStorageLayout::zeroed();
+        layout.value.storageType = PAYLOAD_STORAGE_CUDA_DEVICE_POINTER;
+        let mut storage = GrainStorage::new(&layout, 3);
+        let address = 0x7f00_0000_1000usize as *mut std::ffi::c_void;
+        storage.value.__bindgen_anon_1.cuda.pointer = address;
+        assert_eq!(storage.slot(), 3);
+        assert_eq!(storage.cuda_device_pointer(), Some(address));
+        assert_eq!(storage.host_pointer(), None);
+
+        layout.value.storageType = PAYLOAD_STORAGE_HOST_POINTER;
+        let storage = GrainStorage::new(&layout, 0);
+        assert!(storage.host_pointer().is_some());
+        assert_eq!(storage.cuda_device_pointer(), None);
     }
 }
