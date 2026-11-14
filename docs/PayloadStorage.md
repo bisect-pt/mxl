@@ -160,6 +160,7 @@ How the memory is shared:
 - A reader in another process receives the descriptor when the application calls `mxlFlowReaderMapSlots`, and imports it with `cuMemImportFromShareableHandle`. Opening the reader makes no CUDA call.
 - A reader on another GPU maps the allocation through peer access, if `cudaDeviceCanAccessPeer` allows it. Otherwise mapping returns `MXL_ERR_UNSUPPORTED_OPERATION`.
 - A reader in the writer's own process shares the writer's allocation through a registry inside the process. The allocation is reference counted, so it stays valid for such a reader after the writer is released.
+- Writers and readers give the allocation's descriptor to the application too, in each slot description: `memoryFd`, with the slot's `offset` in the allocation and the `allocationSize`. The backend keeps a duplicate of the descriptor it exported or received, open as long as the slots are mapped, since a reader's CUDA import consumes its own and CUDA does not export an imported allocation again. Another API imports it to reach the payload without a copy, on the device that holds it. The commit contract below holds for that API's work too. A reader on another GPU still gets the descriptor of the memory on the GPU that holds it, which only that GPU can import.
 
 The commit contract: device work that writes a grain must be complete before the writer calls `mxlFlowWriterCommitGrain`, for example after `cudaStreamSynchronize` or `cudaEventSynchronize`. A reader can use a slot as soon as `mxlFlowReaderGetGrainSlot` returns it.
 

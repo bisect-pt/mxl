@@ -58,6 +58,21 @@ extern "C"
     {
         /** CUDA device address of the first byte of the slot storage, valid in the calling process. */
         void* pointer;
+        /**
+         * POSIX file descriptor of the CUDA allocation that holds every slot of the flow, as
+         * cuMemExportToShareableHandle() exports it (CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR), or -1 if the backend
+         * has none. Another API imports it to reach the payload without a copy, on the device that holds the payload
+         * (mxlCudaGrainStorageLayout::deviceUuid). The same descriptor in every slot. The backend owns it, and keeps it
+         * open as long as the slots are mapped: duplicate it to import it or keep it longer. Synchronization is as for
+         * the device address: device work that writes a grain is complete before the grain is committed.
+         */
+        int32_t memoryFd;
+        /** Reserved. Always zero. */
+        uint32_t reserved0;
+        /** Offset of the slot storage in the allocation of memoryFd, in bytes. */
+        uint64_t offset;
+        /** Size of the allocation of memoryFd, in bytes, as an import must give it. */
+        uint64_t allocationSize;
     } mxlCudaGrainStorage;
 
 #ifdef __cplusplus

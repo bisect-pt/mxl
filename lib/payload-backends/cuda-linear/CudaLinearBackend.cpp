@@ -490,17 +490,23 @@ namespace
          * \param[in] ordinal The device whose context mapped the memory.
          * \param[in] base The device address.
          * \param[in] bytes The mapped size.
+         * \param[in] fd A descriptor of the allocation, which this object owns, or -1.
          */
-        Allocation(int ordinal, CUdeviceptr base, std::size_t bytes) noexcept
+        Allocation(int ordinal, CUdeviceptr base, std::size_t bytes, int fd) noexcept
             : ordinal{ordinal}
             , base{base}
             , bytes{bytes}
+            , fd{fd}
         {}
 
-        /** Unmap the memory. */
+        /** Unmap the memory, and close the descriptor. */
         ~Allocation()
         {
             CudaDriver::instance().unmap(ordinal, base, bytes);
+            if (fd >= 0)
+            {
+                ::close(fd);
+            }
         }
 
         Allocation(Allocation const&) = delete;
@@ -511,7 +517,17 @@ namespace
         int ordinal;       ///< The device index in this process.
         CUdeviceptr base;  ///< The device address of the first slot.
         std::size_t bytes; ///< The mapped size.
+        int fd;            ///< A descriptor of the allocation, for applications to import into other APIs, or -1.
     };
+
+    /**
+     * \param[in] fd A descriptor.
+     * \return A duplicate of it that is closed on exec, or -1 if it cannot be duplicated.
+     */
+    int duplicate(int fd) noexcept
+    {
+        return (fd >= 0) ? ::fcntl(fd, F_DUPFD_CLOEXEC, 0) : -1;
+    }
 
     /**
      * Allocations of the writers in this process, by flow directory, so that readers in the same process can share
@@ -852,19 +868,29 @@ namespace
 
         auto const fd = instance.importedFd;
         instance.importedFd = -1;
+        // The import closes the descriptor: the allocation keeps a duplicate, for applications to import elsewhere.
+        auto const shared = duplicate(fd);
         auto base = CUdeviceptr{0};
         if (auto const status = CudaDriver::instance().import(localOrdinal, static_cast<std::size_t>(instance.allocSize), fd, base);
             status != MXL_STATUS_OK)
         {
+            if (shared >= 0)
+            {
+                ::close(shared);
+            }
             return status;
         }
         try
         {
-            instance.allocation = std::make_shared<Allocation>(localOrdinal, base, static_cast<std::size_t>(instance.allocSize));
+            instance.allocation = std::make_shared<Allocation>(localOrdinal, base, static_cast<std::size_t>(instance.allocSize), shared);
         }
         catch (...)
         {
             CudaDriver::instance().unmap(localOrdinal, base, static_cast<std::size_t>(instance.allocSize));
+            if (shared >= 0)
+            {
+                ::close(shared);
+            }
             return MXL_ERR_UNKNOWN;
         }
         instance.localOrdinal = localOrdinal;
@@ -942,13 +968,19 @@ namespace
         instance->exportFd = mapped.fd;
         instance->allocSize = mapped.bytes;
 
+        // The allocation keeps a descriptor of its own, which readers in this process share with it.
+        auto const shared = duplicate(mapped.fd);
         try
         {
-            instance->allocation = std::make_shared<Allocation>(ordinal, mapped.base, mapped.bytes);
+            instance->allocation = std::make_shared<Allocation>(ordinal, mapped.base, mapped.bytes, shared);
         }
         catch (...)
         {
             CudaDriver::instance().unmap(ordinal, mapped.base, mapped.bytes);
+            if (shared >= 0)
+            {
+                ::close(shared);
+            }
             return MXL_ERR_UNKNOWN;
         }
 
@@ -1033,7 +1065,13 @@ namespace
         out_storage->version = 1U;
         out_storage->size = sizeof(*out_storage);
         out_storage->slot = slot;
-        auto const storage = mxlCudaGrainStorage{.pointer = instance->base() + (instance->stride * slot)};
+        auto const storage = mxlCudaGrainStorage{
+            .pointer = instance->base() + (instance->stride * slot),
+            .memoryFd = instance->allocation->fd,
+            .reserved0 = 0U,
+            .offset = instance->stride * slot,
+            .allocationSize = instance->allocation->bytes,
+        };
         mxlSetCudaGrainStorage(out_storage, &storage);
         return MXL_STATUS_OK;
     }

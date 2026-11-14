@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 #include <cuda_runtime_api.h>
+#include <fcntl.h>
 #include <spawn.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -282,6 +283,22 @@ TEST_CASE("CUDA payload : Writer and reader in one process", "[cuda payload]")
     REQUIRE(mxlFlowReaderGetGrainSlot(reader, index, MXL_GRAIN_VALID_SLICES_ALL, 0U, &grainInfo, &slot) == MXL_STATUS_OK);
     REQUIRE(mxlGetCudaGrainStorage(&readerSlots[slot]).pointer == mxlGetCudaGrainStorage(&writerSlots[slot]).pointer);
     requireDeviceBytes(mxlGetCudaGrainStorage(&readerSlots[slot]).pointer, grainInfo.grainSize, 0xAB);
+
+    // Writer and reader give the descriptor of the allocation, for other APIs to import, and where each slot is in it.
+    auto const first = mxlGetCudaGrainStorage(&writerSlots[0]);
+    for (auto s = std::size_t{0}; s < writerSlots.size(); ++s)
+    {
+        for (auto const* const slots : {&writerSlots, &readerSlots})
+        {
+            auto const storage = mxlGetCudaGrainStorage(&(*slots)[s]);
+            REQUIRE(storage.memoryFd >= 0);
+            REQUIRE(::fcntl(storage.memoryFd, F_GETFD) != -1);
+            REQUIRE(storage.reserved0 == 0U);
+            REQUIRE(storage.offset ==
+                    static_cast<std::uint64_t>(static_cast<std::uint8_t*>(storage.pointer) - static_cast<std::uint8_t*>(first.pointer)));
+            REQUIRE(storage.allocationSize >= storage.offset + grainInfo.grainSize);
+        }
+    }
 
     // The pointer based API refuses device memory for readers too.
     REQUIRE(mxlFlowReaderGetGrain(reader, index, 0U, &grainInfo, &payload) == MXL_ERR_UNSUPPORTED_OPERATION);

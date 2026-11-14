@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <cuda_runtime_api.h>
+#include <fcntl.h>
 #include <mxl/storage/cuda_device_pointer.h>
 #include <mxl/flow.h>
 #include <mxl/mxl.h>
@@ -122,6 +123,19 @@ int main(int argc, char** argv)
         {
             return fail("checking the payload", byte);
         }
+    }
+
+    // The descriptor of the allocation, which the reader received from the writer, stays open for other APIs to import.
+    auto const storage = mxlGetCudaGrainStorage(&slots[slot]);
+    auto const first = mxlGetCudaGrainStorage(&slots[0]);
+    if ((storage.memoryFd < 0) || (::fcntl(storage.memoryFd, F_GETFD) == -1))
+    {
+        return fail("checking the allocation's descriptor", storage.memoryFd);
+    }
+    if ((storage.offset != static_cast<std::uint64_t>(static_cast<std::uint8_t*>(storage.pointer) - static_cast<std::uint8_t*>(first.pointer))) ||
+        (storage.allocationSize < storage.offset + grainInfo.grainSize))
+    {
+        return fail("checking the slot's offset and the allocation's size", -1);
     }
 
     mxlReleaseFlowReader(instance, reader);

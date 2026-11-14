@@ -55,7 +55,17 @@ pub trait CudaGrainStorageExt {
     /// memory. The planes are at the offsets of the layout. Device work that writes a grain must be
     /// complete before the grain is committed.
     fn cuda_device_pointer(&self, layout: &GrainStorageLayout) -> Option<*mut std::ffi::c_void>;
+
+    /// The whole storage of the slot, with the descriptor of the allocation, if `layout` says that
+    /// the payload is in CUDA device memory. The descriptor stays open as long as the mapped slots:
+    /// duplicate it to import it or keep it longer.
+    fn cuda_storage(&self, layout: &GrainStorageLayout) -> Option<CudaGrainStorage>;
 }
+
+/// The storage of a slot in CUDA device memory: its device address (`pointer`), and the descriptor
+/// of the CUDA allocation that holds every slot (`memoryFd`, or -1), the slot's offset in it
+/// (`offset`) and its size (`allocationSize`), for another API to import it.
+pub type CudaGrainStorage = bindings::mxlCudaGrainStorage;
 
 impl CudaGrainStorageExt for GrainStorage {
     fn cuda_device_pointer(&self, layout: &GrainStorageLayout) -> Option<*mut std::ffi::c_void> {
@@ -67,6 +77,14 @@ impl CudaGrainStorageExt for GrainStorage {
                 )
                 .pointer
             }
+        })
+    }
+
+    fn cuda_storage(&self, layout: &GrainStorageLayout) -> Option<CudaGrainStorage> {
+        (layout.storage_type() == PAYLOAD_STORAGE_CUDA_DEVICE_POINTER).then(|| {
+            // SAFETY: the reserved bytes are larger than the structure, which is plain integers and
+            // a pointer.
+            unsafe { std::ptr::read_unaligned(self.reserved().as_ptr().cast()) }
         })
     }
 }
@@ -128,5 +146,15 @@ mod tests {
         let host = layout_of_type(PAYLOAD_STORAGE_HOST_POINTER);
         assert!(storage.host_pointer(&host).is_some());
         assert_eq!(storage.cuda_device_pointer(&host), None);
+    }
+
+    #[test]
+    fn the_slot_storage_is_laid_out_as_the_c_header_says() {
+        use std::mem::offset_of;
+        assert_eq!(offset_of!(CudaGrainStorage, pointer), 0);
+        assert_eq!(offset_of!(CudaGrainStorage, memoryFd), 8);
+        assert_eq!(offset_of!(CudaGrainStorage, offset), 16);
+        assert_eq!(offset_of!(CudaGrainStorage, allocationSize), 24);
+        assert!(std::mem::size_of::<CudaGrainStorage>() <= 240);
     }
 }
